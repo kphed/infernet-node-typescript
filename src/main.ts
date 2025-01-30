@@ -4,6 +4,7 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 import { loadValidatedConfig } from './shared/config';
+import { checkNodeIsUpToDate } from './version';
 
 const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
 
@@ -12,6 +13,8 @@ export default async () => {
 
   try {
     config = await loadValidatedConfig(configPath);
+
+    await checkNodeIsUpToDate();
   } catch (err) {
     throw `Config file validation failed: ${err}`;
   }
