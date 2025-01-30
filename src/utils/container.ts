@@ -1,3 +1,4 @@
+// Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/utils/container.py.
 import { InfernetContainer } from '../shared/config';
 
 const autoAssignPort = (

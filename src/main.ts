@@ -9,7 +9,7 @@ import { assignPorts } from './utils/container';
 
 const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
 
-export default async () => {
+(async () => {
   let config;
 
   try {
@@ -21,4 +21,4 @@ export default async () => {
   } catch (err) {
     throw `Config file validation failed: ${err}`;
   }
-};
+})();

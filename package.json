@@ -2,12 +2,12 @@
   "name": "infernet-node-ts",
   "version": "1.0.0",
   "description": "A Ritual.net Infernet node written in Javascript/TypeScript.",
-  "main": "src/app.ts",
+  "main": "src/main.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
-    "start": "tsc && node build/src/app.js",
-    "dev": "nodemon src/app.ts"
+    "start": "tsc && node build/src/main.js",
+    "dev": "nodemon src/main.ts"
   },
   "repository": {
     "type": "git",
@@ -26,7 +26,6 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "dotenv": "^16.4.7",
-    "fastify": "^5.2.1"
+    "dotenv": "^16.4.7"
   }
 }
