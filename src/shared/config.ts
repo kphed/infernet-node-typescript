@@ -1,7 +1,7 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/20365ab233119a106a9cb00912f5e97d4315687c/config.sample.json.
 import fs from 'fs';
 
-class ConfigRateLimit {
+export class ConfigRateLimit {
   num_requests: number = 60;
   period: number = 60;
 
@@ -11,7 +11,7 @@ class ConfigRateLimit {
   }
 }
 
-class ConfigServer {
+export class ConfigServer {
   port: number = 4000;
   rate_limit: ConfigRateLimit = new ConfigRateLimit();
 
@@ -21,7 +21,7 @@ class ConfigServer {
   }
 }
 
-class ConfigWallet {
+export class ConfigWallet {
   max_gas_limit: number = 5_000_000;
   private_key?: string;
   payment_address?: string;
@@ -40,7 +40,7 @@ class ConfigWallet {
   }
 }
 
-class ConfigSnapshotSync {
+export class ConfigSnapshotSync {
   sleep: number = 1;
   batch_size: number = 500;
   starting_sub_id: number = 0;
@@ -59,7 +59,7 @@ class ConfigSnapshotSync {
   }
 }
 
-class ConfigChain {
+export class ConfigChain {
   enabled: boolean = false;
   rpc_url?: string;
   trail_head_blocks: number = 1;
@@ -100,7 +100,7 @@ class ConfigChain {
   }
 }
 
-class ConfigDocker {
+export class ConfigDocker {
   username: string;
   password: string;
 
@@ -110,7 +110,7 @@ class ConfigDocker {
   }
 }
 
-class InfernetContainer {
+export class InfernetContainer {
   id: string;
   image: string = '';
   url: string = '';
@@ -169,7 +169,7 @@ class InfernetContainer {
   }
 }
 
-class ConfigRedis {
+export class ConfigRedis {
   host: string = 'redis';
   port: number = 6379;
 
@@ -179,7 +179,7 @@ class ConfigRedis {
   }
 }
 
-class ConfigLog {
+export class ConfigLog {
   path: string = 'infernet_node.log';
   max_file_size: number = 2 ** 30;
   backup_count: number = 2;
@@ -195,7 +195,7 @@ class ConfigLog {
   }
 }
 
-class Config {
+export class Config {
   containers: InfernetContainer[] = [];
   chain: ConfigChain = new ConfigChain();
   docker?: ConfigDocker;

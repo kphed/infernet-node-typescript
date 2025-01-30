@@ -5,6 +5,7 @@ dotenv.config();
 
 import { loadValidatedConfig } from './shared/config';
 import { checkNodeIsUpToDate } from './version';
+import { assignPorts } from './utils/container';
 
 const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
 
@@ -15,6 +16,8 @@ export default async () => {
     config = await loadValidatedConfig(configPath);
 
     await checkNodeIsUpToDate();
+
+    config.containers = assignPorts(config.containers);
   } catch (err) {
     throw `Config file validation failed: ${err}`;
   }
