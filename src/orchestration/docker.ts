@@ -1,3 +1,4 @@
+import Docker from 'dockerode';
 import { InfernetContainer, ConfigDocker } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import dockerClient from '../docker/client';
@@ -20,7 +21,7 @@ export class ContainerManager extends AsyncTask {
   public port_mappings: {
     [key: string]: number;
   };
-  public client?: {};
+  public client?: Docker;
 
   constructor(
     configs: InfernetContainer[],
@@ -61,5 +62,60 @@ export class ContainerManager extends AsyncTask {
       this.client = dockerClient(credentials?.username, credentials?.password);
 
     console.debug('Initialized Container Manager');
+  }
+
+  private async _pull_images() {
+    console.info('Pulling images, this may take a while...');
+
+    // Pulls images in parallel (each one finishes asynchronously). Resolves once all images have been pulled.
+    const pullImages = () => {
+      const pulledImages: number[] = [];
+
+      return new Promise((resolve, reject) => {
+        this._images.forEach((image, index) => {
+          console.debug(`Pulling image ${image}...`);
+
+          this.client.pull(image, null, (err, stream) => {
+            if (err) {
+              console.error(`Error pulling image ${image}`);
+
+              reject(err);
+            }
+
+            this.client.modem.followProgress(stream, () => {
+              console.error(`Successfully pulled image ${image}`);
+
+              pulledImages.push(index);
+
+              if (pulledImages.length === this._images.length) resolve(true);
+            });
+          });
+        });
+      });
+    };
+
+    try {
+      await pullImages();
+    } catch (err) {
+      console.error('Could not pull all images.');
+
+      throw err;
+    }
+  }
+
+  async setup(pruneContainers: boolean = false) {
+    if (!this._managed) {
+      console.log(
+        'Skipping container manager setup, containers are not managed'
+      );
+
+      return;
+    }
+
+    try {
+      await this._pull_images();
+    } catch (err) {
+      console.error(err);
+    }
   }
 }
