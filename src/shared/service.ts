@@ -4,19 +4,19 @@ const notImplementedError = new Error('Not implemented');
 export class AsyncTask {
   private _shutdown: boolean = false;
 
-  public async setup() {
+  public async setup(...args: any[]) {
     throw notImplementedError;
   }
 
-  public async runForever() {
+  public async runForever(...args: any[]) {
     throw notImplementedError;
   }
 
-  public async cleanup() {
+  public async cleanup(...args: any[]) {
     throw notImplementedError;
   }
 
-  public async stop() {
+  public async stop(...args: any[]) {
     this._shutdown = true;
   }
 }
