@@ -1,4 +1,5 @@
 import Docker from 'dockerode';
+import BluebirdPromise from 'bluebird';
 import { InfernetContainer, ConfigDocker } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import dockerClient from '../docker/client';
@@ -64,6 +65,9 @@ export class ContainerManager extends AsyncTask {
     console.debug('Initialized Container Manager');
   }
 
+  /**
+   * Pulls all managed images in parallel.
+   */
   private async _pull_images() {
     console.info('Pulling images, this may take a while...');
 
@@ -103,6 +107,44 @@ export class ContainerManager extends AsyncTask {
     }
   }
 
+  /**
+   * Force stops and removes any (running) containers with names matching any IDs
+   * provided in the managed containers config.
+   */
+  async _prune_containers() {
+    try {
+      const containerImagesToIds = (await this.client.listContainers()).reduce(
+        (acc, { Image, Id }) => ({
+          ...acc,
+          [Image]: Id,
+        }),
+        {}
+      );
+
+      await BluebirdPromise.each(this._configs, async (config) => {
+        const containerId = containerImagesToIds[config.image];
+
+        if (!containerId) return;
+
+        console.warn(`Pruning container ${containerId}`);
+
+        try {
+          await (
+            await this.client.getContainer(containerId)
+          ).remove({ force: true });
+        } catch (err) {
+          console.error(`Error pruning container ${containerId}`);
+
+          throw err;
+        }
+      });
+    } catch (err) {
+      console.error('Error pruning containers');
+
+      throw err;
+    }
+  }
+
   async setup(pruneContainers: boolean = false) {
     if (!this._managed) {
       console.log(
@@ -114,6 +156,8 @@ export class ContainerManager extends AsyncTask {
 
     try {
       await this._pull_images();
+
+      if (pruneContainers) await this._prune_containers();
     } catch (err) {
       console.error(err);
     }
