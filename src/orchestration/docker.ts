@@ -320,6 +320,27 @@ export class ContainerManager extends AsyncTask {
     );
   }
 
+  /**
+   * Returns port for given container.
+   */
+  public get_port(container: string) {
+    return this.port_mappings[container];
+  }
+
+  /**
+   * Returns url for given container.
+   */
+  public get_url(container: string) {
+    return this._url_mappings[container];
+  }
+
+  /**
+   * Returns bearer auth token for given container.
+   */
+  public get_bearer(container: string) {
+    return this._bearer_mappings[container];
+  }
+
   async setup(pruneContainers: boolean = false) {
     if (!this._managed) {
       console.log(
