@@ -280,6 +280,46 @@ export class ContainerManager extends AsyncTask {
     }
   }
 
+  /**
+   * Get running container information.
+   */
+  public async running_container_info() {
+    const runningContainerIds = (await this.running_containers()).reduce(
+      (acc, val) => ({ ...acc, [val]: true }),
+      {}
+    );
+
+    return this._configs.reduce(
+      (
+        acc: {
+          id: string;
+          description: string;
+          external: boolean;
+          image: string;
+        }[],
+        val
+      ) => {
+        const { id, description, external, image } = val;
+
+        // If the container is running, add it to the list of running container info.
+        if (runningContainerIds[id]) {
+          return [
+            ...acc,
+            {
+              id,
+              description,
+              external,
+              image,
+            },
+          ];
+        }
+
+        return acc;
+      },
+      []
+    );
+  }
+
   async setup(pruneContainers: boolean = false) {
     if (!this._managed) {
       console.log(
