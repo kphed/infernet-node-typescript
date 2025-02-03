@@ -3,6 +3,7 @@ import BluebirdPromise from 'bluebird';
 import { InfernetContainer, ConfigDocker } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import dockerClient from '../docker/client';
+import { delay } from '../utils/helpers';
 
 export class ContainerManager extends AsyncTask {
   private _configs: InfernetContainer[];
@@ -27,7 +28,7 @@ export class ContainerManager extends AsyncTask {
   constructor(
     configs: InfernetContainer[],
     credentials?: ConfigDocker,
-    startup_wait: number = 60,
+    startup_wait: number = 60_000,
     managed: boolean = true
   ) {
     super();
@@ -294,6 +295,10 @@ export class ContainerManager extends AsyncTask {
       if (pruneContainers) await this._prune_containers();
 
       await this._run_containers();
+
+      console.info('Waiting for container startup', this._startup_wait);
+
+      await delay(this._startup_wait);
 
       console.info(
         'Container manager setup complete',
