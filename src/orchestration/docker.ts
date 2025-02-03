@@ -16,7 +16,7 @@ export class ContainerManager extends AsyncTask {
   };
   private _startup_wait: number;
   private _managed: boolean;
-  private _containers?: {
+  private _containers: {
     [key: string]: any;
   };
   public port_mappings: {
@@ -58,6 +58,7 @@ export class ContainerManager extends AsyncTask {
     );
     this._startup_wait = startup_wait;
     this._managed = managed;
+    this._containers = {};
 
     if (managed)
       this.client = dockerClient(credentials?.username, credentials?.password);
@@ -113,7 +114,7 @@ export class ContainerManager extends AsyncTask {
    */
   async _prune_containers() {
     try {
-      const containerImagesToIds = (await this.client.listContainers()).reduce(
+      const containers = (await this.client.listContainers()).reduce(
         (acc, { Image, Id }) => ({
           ...acc,
           [Image]: Id,
@@ -122,7 +123,7 @@ export class ContainerManager extends AsyncTask {
       );
 
       await BluebirdPromise.each(this._configs, async (config) => {
-        const containerId = containerImagesToIds[config.image];
+        const containerId = containers[config.image];
 
         if (!containerId) return;
 
@@ -145,6 +146,106 @@ export class ContainerManager extends AsyncTask {
     }
   }
 
+  /**
+   * Runs all containers with given configurations.
+   */
+  private async _run_containers() {
+    try {
+      const existingContainers = (
+        await this.client.listContainers({ all: true })
+      ).reduce((acc, val) => {
+        const { State, Id, Image, Created } = val;
+
+        // Skip the container if it is older than the one currently stored.
+        if (acc[Image] && acc[Image].created > Created) return acc;
+
+        return {
+          ...acc,
+          [Image]: {
+            id: Id,
+            created: Created,
+            isRunning: State === 'running',
+          },
+        };
+      }, {});
+
+      await BluebirdPromise.each(this._configs, async (config) => {
+        const existingContainer = existingContainers[config.image];
+        let container;
+
+        // If the container exists and is not running, start the container.
+        if (existingContainer) {
+          container = this.client.getContainer(existingContainer.id);
+
+          if (!existingContainer.isRunning) {
+            await container.start();
+
+            console.info(
+              `Started existing container '${config.id}' on port ${config.port}`
+            );
+          }
+        } else {
+          const containerEnv = config.env
+            ? Object.keys(config.env).reduce(
+                (acc: string[], val) => [...acc, `${val}=${config.env[val]}`],
+                []
+              )
+            : [];
+          const exposedPorts = {
+            [`${config.port}/tcp`]: {},
+          };
+          const hostConfig = {
+            PortBindings: {
+              [`${config.port}/tcp`]: [
+                {
+                  HostPort: `${config.port}`,
+                },
+              ],
+            },
+            PublishAllPorts: true,
+            RestartPolicy: {
+              Name: 'on-failure',
+              MaximumRetryCount: 5,
+            },
+            DeviceRequests: [
+              ...(config.gpu
+                ? [
+                    {
+                      Driver: 'nvidia',
+                      Count: -1,
+                    },
+                  ]
+                : []),
+            ],
+          };
+          const { volumes } = config.volumes;
+
+          // If the container does not exist, create and run a new container with the given configuration.
+          container = await this.client.createContainer({
+            ...(config.command ? { Cmd: config.command } : {}),
+            Image: config.image,
+            Env: containerEnv,
+            ExposedPorts: exposedPorts,
+            HostConfig: hostConfig,
+            Volumes: volumes,
+          });
+
+          await container.rename({ name: config.id });
+          await container.start();
+
+          console.info(
+            `Started new container '${config.id}' on port ${config.port}`
+          );
+        }
+
+        // Store existing container object in state.
+        this._containers[container.id] = container;
+      });
+    } catch (err) {
+      throw err;
+    }
+  }
+
   async setup(pruneContainers: boolean = false) {
     if (!this._managed) {
       console.log(
@@ -158,6 +259,8 @@ export class ContainerManager extends AsyncTask {
       await this._pull_images();
 
       if (pruneContainers) await this._prune_containers();
+
+      await this._run_containers();
     } catch (err) {
       console.error(err);
     }
