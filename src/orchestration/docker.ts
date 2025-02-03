@@ -246,6 +246,39 @@ export class ContainerManager extends AsyncTask {
     }
   }
 
+  /**
+   * Get list of running container IDs.
+   */
+  public async running_containers() {
+    const configIds = this._configs.reduce(
+      (acc, { id }) => ({
+        ...acc,
+        [id]: true,
+      }),
+      {}
+    );
+
+    // If not managed, return all container IDs as running.
+    if (!this._managed) return Object.keys(configIds);
+
+    try {
+      const containers = await this.client.listContainers();
+
+      return containers.reduce((acc, val) => {
+        const containerName = val.Names[0].substring(1);
+
+        if (val.State === 'running' && configIds[containerName])
+          return [...acc, containerName];
+
+        return acc;
+      }, []);
+    } catch (err) {
+      console.error('Error getting running containers');
+
+      throw err;
+    }
+  }
+
   async setup(pruneContainers: boolean = false) {
     if (!this._managed) {
       console.log(
@@ -261,8 +294,17 @@ export class ContainerManager extends AsyncTask {
       if (pruneContainers) await this._prune_containers();
 
       await this._run_containers();
+
+      console.info(
+        'Container manager setup complete',
+        await this.running_containers()
+      );
     } catch (err) {
-      console.error(err);
+      console.error('Error setting up container manager', err);
+
+      throw new Error(
+        'Container manager setup failed. Check logs for details.'
+      );
     }
   }
 }
