@@ -8,6 +8,8 @@ import { delay } from '../utils/helpers';
 // 60 seconds.
 const DEFAULT_STARTUP_WAIT = 60_000;
 
+const DEFAULT_CONTAINER_STOP_TIMEOUT = 60_000;
+
 export class ContainerManager extends AsyncTask {
   #configs: InfernetContainer[];
   #creds?: ConfigDocker;
@@ -272,7 +274,29 @@ export class ContainerManager extends AsyncTask {
       });
   }
 
-  stop(): void {}
+  /**
+   * Force stops all containers.
+   */
+  async stop(): Promise<void> {
+    this.shutdown = true;
+
+    if (this.#managed) {
+      console.log('Stopping containers');
+
+      await BluebirdPromise.each(
+        Object.keys(this.#containers),
+        async (containerKey) => {
+          try {
+            await this.#containers[containerKey].stop({
+              abortSignal: AbortSignal.timeout(DEFAULT_CONTAINER_STOP_TIMEOUT),
+            });
+          } catch (err) {
+            console.error(`Error stopping container ${containerKey}`, err);
+          }
+        }
+      );
+    }
+  }
 
   cleanup(): void {}
 
