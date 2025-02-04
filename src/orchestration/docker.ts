@@ -90,15 +90,23 @@ export class ContainerManager extends AsyncTask {
    */
   async running_containers(): Promise<string[]> {
     // If not managed, return all container IDs as running.
-    if (!this.#managed) return Object.keys(this.#containers);
+    if (!this.#managed) return this.#configs.map(({ id }) => id);
 
     try {
-      const containers = await this.client.listContainers();
+      const runningContainers = (await this.client.listContainers()).reduce(
+        (acc, { Names, State }) => {
+          if (State !== 'running') return acc;
 
-      return containers.reduce(
-        (acc: string[], { Id, State }) =>
-          this.#containers[Id] && State === 'running' ? [...acc, Id] : acc,
-        []
+          return {
+            ...acc,
+            [Names[0].substring(1)]: true,
+          };
+        },
+        {}
+      );
+
+      return Object.keys(this.#containers).filter(
+        (key) => runningContainers[key]
       );
     } catch (err) {
       throw err;
@@ -315,78 +323,78 @@ export class ContainerManager extends AsyncTask {
         };
       }, {});
 
-      await BluebirdPromise.each(this.#configs, async (config) => {
-        const existingContainer = existingContainers[config.image];
-        let container;
+      await BluebirdPromise.each(
+        this.#configs,
+        async ({ id, image, port, env, gpu, volumes, command }) => {
+          const existingContainer = existingContainers[image];
+          let container;
 
-        // If the container exists and is not running, start the container.
-        if (existingContainer) {
-          container = this.client.getContainer(existingContainer.id);
+          // If the container exists and is not running, start the container.
+          if (existingContainer) {
+            container = this.client.getContainer(existingContainer.id);
 
-          if (!existingContainer.isRunning) {
+            if (!existingContainer.isRunning) {
+              await container.start();
+
+              console.info(
+                `Started existing container '${id}' on port ${port}`
+              );
+            }
+          } else {
+            const containerEnv = env
+              ? Object.keys(env).reduce(
+                  (acc: string[], val) => [...acc, `${val}=${env[val]}`],
+                  []
+                )
+              : [];
+            const exposedPorts = {
+              [`${port}/tcp`]: {},
+            };
+            const hostConfig = {
+              PortBindings: {
+                [`${port}/tcp`]: [
+                  {
+                    HostPort: `${port}`,
+                  },
+                ],
+              },
+              PublishAllPorts: true,
+              RestartPolicy: {
+                Name: 'on-failure',
+                MaximumRetryCount: 5,
+              },
+              DeviceRequests: [
+                ...(gpu
+                  ? [
+                      {
+                        Driver: 'nvidia',
+                        Count: -1,
+                      },
+                    ]
+                  : []),
+              ],
+            };
+
+            // If the container does not exist, create and run a new container with the given configuration.
+            container = await this.client.createContainer({
+              ...(command ? { Cmd: command } : {}),
+              Image: image,
+              Env: containerEnv,
+              ExposedPorts: exposedPorts,
+              HostConfig: hostConfig,
+              Volumes: volumes,
+            });
+
+            await container.rename({ name: id });
             await container.start();
 
-            console.info(
-              `Started existing container '${config.id}' on port ${config.port}`
-            );
+            console.info(`Started new container '${id}' on port ${port}`);
           }
-        } else {
-          const containerEnv = config.env
-            ? Object.keys(config.env).reduce(
-                (acc: string[], val) => [...acc, `${val}=${config.env[val]}`],
-                []
-              )
-            : [];
-          const exposedPorts = {
-            [`${config.port}/tcp`]: {},
-          };
-          const hostConfig = {
-            PortBindings: {
-              [`${config.port}/tcp`]: [
-                {
-                  HostPort: `${config.port}`,
-                },
-              ],
-            },
-            PublishAllPorts: true,
-            RestartPolicy: {
-              Name: 'on-failure',
-              MaximumRetryCount: 5,
-            },
-            DeviceRequests: [
-              ...(config.gpu
-                ? [
-                    {
-                      Driver: 'nvidia',
-                      Count: -1,
-                    },
-                  ]
-                : []),
-            ],
-          };
-          const { volumes } = config.volumes;
 
-          // If the container does not exist, create and run a new container with the given configuration.
-          container = await this.client.createContainer({
-            ...(config.command ? { Cmd: config.command } : {}),
-            Image: config.image,
-            Env: containerEnv,
-            ExposedPorts: exposedPorts,
-            HostConfig: hostConfig,
-            Volumes: volumes,
-          });
-
-          await container.rename({ name: config.id });
-          await container.start();
-
-          console.info(
-            `Started new container '${config.id}' on port ${config.port}`
-          );
+          // Store existing container object in state.
+          this.#containers[id] = container;
         }
-
-        // Store existing container object in state.
-        this.#containers[container.id] = container;
-      });
+      );
     } catch (err) {
       throw err;
     }
