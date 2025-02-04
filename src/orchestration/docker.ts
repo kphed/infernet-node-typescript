@@ -6,24 +6,24 @@ import dockerClient from '../docker/client';
 import { delay } from '../utils/helpers';
 
 export class ContainerManager extends AsyncTask {
-  private _configs: InfernetContainer[];
-  private _creds?: ConfigDocker;
-  private _images: string[];
-  private _url_mappings: {
+  #configs: InfernetContainer[];
+  #creds?: ConfigDocker;
+  #images: string[];
+  #url_mappings: {
     [key: string]: string;
   };
-  private _bearer_mappings: {
+  #bearer_mappings: {
     [key: string]: string;
   };
-  private _startup_wait: number;
-  private _managed: boolean;
-  private _containers: {
+  #startup_wait: number;
+  #managed: boolean;
+  #containers: {
     [key: string]: any;
   };
-  public port_mappings: {
+  #port_mappings: {
     [key: string]: number;
   };
-  public client?: Docker;
+  client?: Docker;
 
   constructor(
     configs: InfernetContainer[],
@@ -33,33 +33,33 @@ export class ContainerManager extends AsyncTask {
   ) {
     super();
 
-    this._configs = configs;
-    this._creds = credentials;
-    this._images = configs.map(({ image }) => image);
-    this.port_mappings = configs.reduce(
+    this.#configs = configs;
+    this.#creds = credentials;
+    this.#images = configs.map(({ image }) => image);
+    this.#port_mappings = configs.reduce(
       (acc, { id, port }) => ({
         ...acc,
         [id]: port,
       }),
       {}
     );
-    this._url_mappings = configs.reduce(
+    this.#url_mappings = configs.reduce(
       (acc, { id, url }) => ({
         ...acc,
         [id]: url,
       }),
       {}
     );
-    this._bearer_mappings = configs.reduce(
+    this.#bearer_mappings = configs.reduce(
       (acc, { id, bearer }) => ({
         ...acc,
         [id]: bearer,
       }),
       {}
     );
-    this._startup_wait = startup_wait;
-    this._managed = managed;
-    this._containers = {};
+    this.#startup_wait = startup_wait;
+    this.#managed = managed;
+    this.#containers = {};
 
     if (managed)
       this.client = dockerClient(credentials?.username, credentials?.password);
@@ -70,7 +70,7 @@ export class ContainerManager extends AsyncTask {
   /**
    * Pulls all managed images in parallel.
    */
-  private async _pull_images() {
+  async #pull_images() {
     console.info('Pulling images, this may take a while...');
 
     // Pulls images in parallel (each one finishes asynchronously). Resolves once all images have been pulled.
@@ -78,7 +78,7 @@ export class ContainerManager extends AsyncTask {
       const pulledImages: number[] = [];
 
       return new Promise((resolve, reject) => {
-        this._images.forEach((image, index) => {
+        this.#images.forEach((image, index) => {
           console.debug(`Pulling image ${image}...`);
 
           this.client.pull(image, null, (err, stream) => {
@@ -93,7 +93,7 @@ export class ContainerManager extends AsyncTask {
 
               pulledImages.push(index);
 
-              if (pulledImages.length === this._images.length) resolve(true);
+              if (pulledImages.length === this.#images.length) resolve(true);
             });
           });
         });
@@ -113,7 +113,7 @@ export class ContainerManager extends AsyncTask {
    * Force stops and removes any (running) containers with names matching any IDs
    * provided in the managed containers config.
    */
-  async _prune_containers() {
+  async #prune_containers() {
     try {
       const containers = (await this.client.listContainers()).reduce(
         (acc, { Image, Id }) => ({
@@ -123,7 +123,7 @@ export class ContainerManager extends AsyncTask {
         {}
       );
 
-      await BluebirdPromise.each(this._configs, async (config) => {
+      await BluebirdPromise.each(this.#configs, async (config) => {
         const containerId = containers[config.image];
 
         if (!containerId) return;
@@ -150,7 +150,7 @@ export class ContainerManager extends AsyncTask {
   /**
    * Runs all containers with given configurations.
    */
-  private async _run_containers() {
+  async #run_containers() {
     try {
       const existingContainers = (
         await this.client.listContainers({ all: true })
@@ -170,7 +170,7 @@ export class ContainerManager extends AsyncTask {
         };
       }, {});
 
-      await BluebirdPromise.each(this._configs, async (config) => {
+      await BluebirdPromise.each(this.#configs, async (config) => {
         const existingContainer = existingContainers[config.image];
         let container;
 
@@ -240,7 +240,7 @@ export class ContainerManager extends AsyncTask {
         }
 
         // Store existing container object in state.
-        this._containers[container.id] = container;
+        this.#containers[container.id] = container;
       });
     } catch (err) {
       throw err;
@@ -250,8 +250,8 @@ export class ContainerManager extends AsyncTask {
   /**
    * Get list of running container IDs.
    */
-  public async running_containers() {
-    const configIds = this._configs.reduce(
+  async running_containers() {
+    const configIds = this.#configs.reduce(
       (acc, { id }) => ({
         ...acc,
         [id]: true,
@@ -260,7 +260,7 @@ export class ContainerManager extends AsyncTask {
     );
 
     // If not managed, return all container IDs as running.
-    if (!this._managed) return Object.keys(configIds);
+    if (!this.#managed) return Object.keys(configIds);
 
     try {
       const containers = await this.client.listContainers();
@@ -283,13 +283,13 @@ export class ContainerManager extends AsyncTask {
   /**
    * Get running container information.
    */
-  public async running_container_info() {
+  async running_container_info() {
     const runningContainerIds = (await this.running_containers()).reduce(
       (acc, val) => ({ ...acc, [val]: true }),
       {}
     );
 
-    return this._configs.reduce(
+    return this.#configs.reduce(
       (
         acc: {
           id: string;
@@ -323,26 +323,26 @@ export class ContainerManager extends AsyncTask {
   /**
    * Returns port for given container.
    */
-  public get_port(container: string) {
-    return this.port_mappings[container];
+  get_port(container: string) {
+    return this.#port_mappings[container];
   }
 
   /**
    * Returns url for given container.
    */
-  public get_url(container: string) {
-    return this._url_mappings[container];
+  get_url(container: string) {
+    return this.#url_mappings[container];
   }
 
   /**
    * Returns bearer auth token for given container.
    */
-  public get_bearer(container: string) {
-    return this._bearer_mappings[container];
+  get_bearer(container: string) {
+    return this.#bearer_mappings[container];
   }
 
   async setup(pruneContainers: boolean = false) {
-    if (!this._managed) {
+    if (!this.#managed) {
       console.log(
         'Skipping container manager setup, containers are not managed'
       );
@@ -351,15 +351,15 @@ export class ContainerManager extends AsyncTask {
     }
 
     try {
-      await this._pull_images();
+      await this.#pull_images();
 
-      if (pruneContainers) await this._prune_containers();
+      if (pruneContainers) await this.#prune_containers();
 
-      await this._run_containers();
+      await this.#run_containers();
 
-      console.info('Waiting for container startup', this._startup_wait);
+      console.info('Waiting for container startup', this.#startup_wait);
 
-      await delay(this._startup_wait);
+      await delay(this.#startup_wait);
 
       console.info(
         'Container manager setup complete',
