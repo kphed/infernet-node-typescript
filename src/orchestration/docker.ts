@@ -5,10 +5,16 @@ import { AsyncTask } from '../shared/service';
 import dockerClient from '../docker/client';
 import { delay } from '../utils/helpers';
 
+// 60 seconds.
+const DEFAULT_STARTUP_WAIT = 60_000;
+
 export class ContainerManager extends AsyncTask {
   #configs: InfernetContainer[];
   #creds?: ConfigDocker;
   #images: string[];
+  #port_mappings: {
+    [key: string]: number;
+  };
   #url_mappings: {
     [key: string]: string;
   };
@@ -20,15 +26,15 @@ export class ContainerManager extends AsyncTask {
   #containers: {
     [key: string]: any;
   };
-  #port_mappings: {
-    [key: string]: number;
-  };
   client?: Docker;
 
+  /**
+   * Initialize ContainerManager with given configurations and credentials.
+   */
   constructor(
     configs: InfernetContainer[],
     credentials?: ConfigDocker,
-    startup_wait: number = 60_000,
+    startup_wait: number = DEFAULT_STARTUP_WAIT,
     managed: boolean = true
   ) {
     super();
@@ -64,45 +70,37 @@ export class ContainerManager extends AsyncTask {
     if (managed)
       this.client = dockerClient(credentials?.username, credentials?.password);
 
-    console.debug('Initialized Container Manager');
+    console.debug(
+      'Initialized Container Manager',
+      JSON.stringify(this.#port_mappings)
+    );
   }
 
   /**
    * Port mappings for containers. Does NOT guarantee containers are running.
    */
-  get port_mappings() {
+  get port_mappings(): {
+    [key: string]: number;
+  } {
     return this.#port_mappings;
   }
 
   /**
    * Get list of running container IDs.
    */
-  async running_containers() {
-    const configIds = this.#configs.reduce(
-      (acc, { id }) => ({
-        ...acc,
-        [id]: true,
-      }),
-      {}
-    );
-
+  async running_containers(): Promise<string[]> {
     // If not managed, return all container IDs as running.
-    if (!this.#managed) return Object.keys(configIds);
+    if (!this.#managed) return Object.keys(this.#containers);
 
     try {
       const containers = await this.client.listContainers();
 
-      return containers.reduce((acc, val) => {
-        const containerName = val.Names[0].substring(1);
-
-        if (val.State === 'running' && configIds[containerName])
-          return [...acc, containerName];
-
-        return acc;
-      }, []);
+      return containers.reduce(
+        (acc: string[], { Id, State }) =>
+          this.#containers[Id] && State === 'running' ? [...acc, Id] : acc,
+        []
+      );
     } catch (err) {
-      console.error('Error getting running containers');
-
       throw err;
     }
   }
@@ -110,7 +108,11 @@ export class ContainerManager extends AsyncTask {
   /**
    * Get running container information.
    */
-  async running_container_info() {
+  async running_container_info(): Promise<
+    {
+      [key: string]: any;
+    }[]
+  > {
     const runningContainerIds = (await this.running_containers()).reduce(
       (acc, val) => ({ ...acc, [val]: true }),
       {}
@@ -124,25 +126,20 @@ export class ContainerManager extends AsyncTask {
           external: boolean;
           image: string;
         }[],
-        val
-      ) => {
-        const { id, description, external, image } = val;
-
+        { id, description, external, image }
+      ) =>
         // If the container is running, add it to the list of running container info.
-        if (runningContainerIds[id]) {
-          return [
-            ...acc,
-            {
-              id,
-              description,
-              external,
-              image,
-            },
-          ];
-        }
-
-        return acc;
-      },
+        runningContainerIds[id]
+          ? [
+              ...acc,
+              {
+                id,
+                description,
+                external,
+                image,
+              },
+            ]
+          : acc,
       []
     );
   }
@@ -150,21 +147,21 @@ export class ContainerManager extends AsyncTask {
   /**
    * Returns port for given container.
    */
-  get_port(container: string) {
+  get_port(container: string): number {
     return this.#port_mappings[container];
   }
 
   /**
    * Returns url for given container.
    */
-  get_url(container: string) {
+  get_url(container: string): string {
     return this.#url_mappings[container];
   }
 
   /**
    * Returns bearer auth token for given container.
    */
-  get_bearer(container: string) {
+  get_bearer(container: string): string {
     return this.#bearer_mappings[container];
   }
 
