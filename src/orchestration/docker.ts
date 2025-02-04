@@ -373,4 +373,8 @@ export class ContainerManager extends AsyncTask {
       );
     }
   }
+
+  runForever(): void {}
+
+  cleanup(): void {}
 }

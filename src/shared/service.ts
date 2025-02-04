@@ -1,22 +1,16 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/69963b80106f8c518c80e6617c538a599b9a30a1/src/shared/service.py.
 const notImplementedError = new Error('Not implemented');
 
-export class AsyncTask {
-  private _shutdown: boolean = false;
+export abstract class AsyncTask {
+  #shutdown: boolean = false;
 
-  public async setup(...args: any[]) {
-    throw notImplementedError;
-  }
+  abstract setup(): void;
 
-  public async runForever(...args: any[]) {
-    throw notImplementedError;
-  }
+  abstract runForever(): void;
 
-  public async cleanup(...args: any[]) {
-    throw notImplementedError;
-  }
+  abstract cleanup(): void;
 
-  public async stop(...args: any[]) {
-    this._shutdown = true;
+  stop(): void {
+    this.#shutdown = true;
   }
 }
