@@ -68,6 +68,154 @@ export class ContainerManager extends AsyncTask {
   }
 
   /**
+   * Port mappings for containers. Does NOT guarantee containers are running.
+   */
+  get port_mappings() {
+    return this.#port_mappings;
+  }
+
+  /**
+   * Get list of running container IDs.
+   */
+  async running_containers() {
+    const configIds = this.#configs.reduce(
+      (acc, { id }) => ({
+        ...acc,
+        [id]: true,
+      }),
+      {}
+    );
+
+    // If not managed, return all container IDs as running.
+    if (!this.#managed) return Object.keys(configIds);
+
+    try {
+      const containers = await this.client.listContainers();
+
+      return containers.reduce((acc, val) => {
+        const containerName = val.Names[0].substring(1);
+
+        if (val.State === 'running' && configIds[containerName])
+          return [...acc, containerName];
+
+        return acc;
+      }, []);
+    } catch (err) {
+      console.error('Error getting running containers');
+
+      throw err;
+    }
+  }
+
+  /**
+   * Get running container information.
+   */
+  async running_container_info() {
+    const runningContainerIds = (await this.running_containers()).reduce(
+      (acc, val) => ({ ...acc, [val]: true }),
+      {}
+    );
+
+    return this.#configs.reduce(
+      (
+        acc: {
+          id: string;
+          description: string;
+          external: boolean;
+          image: string;
+        }[],
+        val
+      ) => {
+        const { id, description, external, image } = val;
+
+        // If the container is running, add it to the list of running container info.
+        if (runningContainerIds[id]) {
+          return [
+            ...acc,
+            {
+              id,
+              description,
+              external,
+              image,
+            },
+          ];
+        }
+
+        return acc;
+      },
+      []
+    );
+  }
+
+  /**
+   * Returns port for given container.
+   */
+  get_port(container: string) {
+    return this.#port_mappings[container];
+  }
+
+  /**
+   * Returns url for given container.
+   */
+  get_url(container: string) {
+    return this.#url_mappings[container];
+  }
+
+  /**
+   * Returns bearer auth token for given container.
+   */
+  get_bearer(container: string) {
+    return this.#bearer_mappings[container];
+  }
+
+  /**
+   * Setup orchestrator. If containers are managed:
+   * 1. Pulls images in parallel, if not already pulled.
+   * 2. Prunes any containers with conflicting IDs, if prune_containers is True.
+   * 3. Creates containers, if not already created.
+   * 4. Starts containers, if not already started.
+   * 5. Waits for startup_wait seconds for containers to start.
+   */
+  async setup(pruneContainers: boolean = false) {
+    if (!this.#managed) {
+      console.log(
+        'Skipping container manager setup, containers are not managed'
+      );
+
+      return;
+    }
+
+    try {
+      await this.#pull_images();
+
+      if (pruneContainers) await this.#prune_containers();
+
+      await this.#run_containers();
+
+      console.info('Waiting for container startup', this.#startup_wait);
+
+      await delay(this.#startup_wait);
+
+      console.info(
+        'Container manager setup complete',
+        await this.running_containers()
+      );
+    } catch (err) {
+      console.error('Error setting up container manager', err);
+
+      throw new Error(
+        'Container manager setup failed. Check logs for details.'
+      );
+    }
+  }
+
+  runForever(): void {}
+
+  stop(): void {}
+
+  cleanup(): void {}
+
+  /**
    * Pulls all managed images in parallel.
    */
   async #pull_images() {
@@ -246,135 +394,4 @@ export class ContainerManager extends AsyncTask {
       throw err;
     }
   }
-
-  /**
-   * Get list of running container IDs.
-   */
-  async running_containers() {
-    const configIds = this.#configs.reduce(
-      (acc, { id }) => ({
-        ...acc,
-        [id]: true,
-      }),
-      {}
-    );
-
-    // If not managed, return all container IDs as running.
-    if (!this.#managed) return Object.keys(configIds);
-
-    try {
-      const containers = await this.client.listContainers();
-
-      return containers.reduce((acc, val) => {
-        const containerName = val.Names[0].substring(1);
-
-        if (val.State === 'running' && configIds[containerName])
-          return [...acc, containerName];
-
-        return acc;
-      }, []);
-    } catch (err) {
-      console.error('Error getting running containers');
-
-      throw err;
-    }
-  }
-
-  /**
-   * Get running container information.
-   */
-  async running_container_info() {
-    const runningContainerIds = (await this.running_containers()).reduce(
-      (acc, val) => ({ ...acc, [val]: true }),
-      {}
-    );
-
-    return this.#configs.reduce(
-      (
-        acc: {
-          id: string;
-          description: string;
-          external: boolean;
-          image: string;
-        }[],
-        val
-      ) => {
-        const { id, description, external, image } = val;
-
-        // If the container is running, add it to the list of running container info.
-        if (runningContainerIds[id]) {
-          return [
-            ...acc,
-            {
-              id,
-              description,
-              external,
-              image,
-            },
-          ];
-        }
-
-        return acc;
-      },
-      []
-    );
-  }
-
-  /**
-   * Returns port for given container.
-   */
-  get_port(container: string) {
-    return this.#port_mappings[container];
-  }
-
-  /**
-   * Returns url for given container.
-   */
-  get_url(container: string) {
-    return this.#url_mappings[container];
-  }
-
-  /**
-   * Returns bearer auth token for given container.
-   */
-  get_bearer(container: string) {
-    return this.#bearer_mappings[container];
-  }
-
-  async setup(pruneContainers: boolean = false) {
-    if (!this.#managed) {
-      console.log(
-        'Skipping container manager setup, containers are not managed'
-      );
-
-      return;
-    }
-
-    try {
-      await this.#pull_images();
-
-      if (pruneContainers) await this.#prune_containers();
-
-      await this.#run_containers();
-
-      console.info('Waiting for container startup', this.#startup_wait);
-
-      await delay(this.#startup_wait);
-
-      console.info(
-        'Container manager setup complete',
-        await this.running_containers()
-      );
-    } catch (err) {
-      console.error('Error setting up container manager', err);
-
-      throw new Error(
-        'Container manager setup failed. Check logs for details.'
-      );
-    }
-  }
-
-  runForever(): void {}
-
-  cleanup(): void {}
 }
