@@ -271,27 +271,27 @@ export class ContainerManager extends AsyncTask {
    * Force stops and removes any (running) containers with names matching any IDs
    * provided in the managed containers config.
    */
-  async #prune_containers() {
+  async #prune_containers(): Promise<void> {
     try {
-      const containers = (await this.client.listContainers()).reduce(
-        (acc, { Image, Id }) => ({
+      const containers = (
+        await this.client.listContainers({ all: true })
+      ).reduce(
+        (acc, { Names, Id }) => ({
           ...acc,
-          [Image]: Id,
+          [Names[0].substring(1)]: Id,
         }),
         {}
       );
 
       await BluebirdPromise.each(this.#configs, async (config) => {
-        const containerId = containers[config.image];
+        const containerId = containers[config.id];
 
         if (!containerId) return;
 
         console.warn(`Pruning container ${containerId}`);
 
         try {
-          await (
-            await this.client.getContainer(containerId)
-          ).remove({ force: true });
+          await this.client.getContainer(containerId).remove({ force: true });
         } catch (err) {
           console.error(`Error pruning container ${containerId}`);
 
@@ -346,49 +346,49 @@ export class ContainerManager extends AsyncTask {
               );
             }
           } else {
-            const containerEnv = env
-              ? Object.keys(env).reduce(
-                  (acc: string[], val) => [...acc, `${val}=${env[val]}`],
-                  []
-                )
-              : [];
-            const exposedPorts = {
-              [`${port}/tcp`]: {},
-            };
-            const hostConfig = {
-              PortBindings: {
-                [`${port}/tcp`]: [
-                  {
-                    HostPort: `${port}`,
-                  },
+            const containerConfig = {
+              ...(command ? { Cmd: command } : {}),
+              Image: image,
+              Env: env
+                ? Object.keys(env).reduce(
+                    (acc: string[], val) => [...acc, `${val}=${env[val]}`],
+                    []
+                  )
+                : [],
+              Volumes: volumes
+                ? volumes.reduce((acc, val) => ({ ...acc, [val]: {} }), {})
+                : {},
+              ExposedPorts: {
+                [`${port}/tcp`]: {},
+              },
+              HostConfig: {
+                PortBindings: {
+                  [`${port}/tcp`]: [
+                    {
+                      HostPort: `${port}`,
+                    },
+                  ],
+                },
+                PublishAllPorts: true,
+                RestartPolicy: {
+                  Name: 'on-failure',
+                  MaximumRetryCount: 5,
+                },
+                DeviceRequests: [
+                  ...(gpu
+                    ? [
+                        {
+                          Driver: 'nvidia',
+                          Count: -1,
+                        },
+                      ]
+                    : []),
                 ],
               },
-              PublishAllPorts: true,
-              RestartPolicy: {
-                Name: 'on-failure',
-                MaximumRetryCount: 5,
-              },
-              DeviceRequests: [
-                ...(gpu
-                  ? [
-                      {
-                        Driver: 'nvidia',
-                        Count: -1,
-                      },
-                    ]
-                  : []),
-              ],
             };
 
             // If the container does not exist, create and run a new container with the given configuration.
-            container = await this.client.createContainer({
-              ...(command ? { Cmd: command } : {}),
-              Image: image,
-              Env: containerEnv,
-              ExposedPorts: exposedPorts,
-              HostConfig: hostConfig,
-              Volumes: volumes,
-            });
+            container = await this.client.createContainer(containerConfig);
 
             await container.rename({ name: id });
             await container.start();
