@@ -347,44 +347,59 @@ export class ContainerManager extends AsyncTask {
             }
           } else {
             const containerConfig = {
-              ...(command ? { Cmd: command } : {}),
               Image: image,
-              Env: env
-                ? Object.keys(env).reduce(
-                    (acc: string[], val) => [...acc, `${val}=${env[val]}`],
-                    []
-                  )
-                : [],
-              Volumes: volumes
-                ? volumes.reduce((acc, val) => ({ ...acc, [val]: {} }), {})
-                : {},
-              ExposedPorts: {
-                [`${port}/tcp`]: {},
-              },
-              HostConfig: {
-                PortBindings: {
-                  [`${port}/tcp`]: [
-                    {
-                      HostPort: `${port}`,
+              ...(port
+                ? {
+                    ExposedPorts: {
+                      [`${port}/tcp`]: {},
                     },
-                  ],
-                },
-                PublishAllPorts: true,
+                  }
+                : {}),
+              HostConfig: {
+                ...(port
+                  ? {
+                      PortBindings: {
+                        [`${port}/tcp`]: [
+                          {
+                            HostPort: `${port}`,
+                          },
+                        ],
+                      },
+                      PublishAllPorts: true,
+                    }
+                  : {}),
                 RestartPolicy: {
                   Name: 'on-failure',
                   MaximumRetryCount: 5,
                 },
-                DeviceRequests: [
-                  ...(gpu
-                    ? [
+                ...(gpu
+                  ? {
+                      DeviceRequests: [
                         {
                           Driver: 'nvidia',
                           Count: -1,
                         },
-                      ]
-                    : []),
-                ],
+                      ],
+                    }
+                  : {}),
               },
+              ...(command ? { Cmd: command } : {}),
+              ...(env && Object.keys(env).length
+                ? {
+                    Env: Object.keys(env).reduce(
+                      (acc: string[], val) => [...acc, `${val}=${env[val]}`],
+                      []
+                    ),
+                  }
+                : {}),
+              ...(volumes && volumes.length
+                ? {
+                    Volumes: volumes.reduce(
+                      (acc, val) => ({ ...acc, [val]: {} }),
+                      {}
+                    ),
+                  }
+                : {}),
             };
 
             // If the container does not exist, create and run a new container with the given configuration.
