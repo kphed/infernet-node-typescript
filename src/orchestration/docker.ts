@@ -214,7 +214,63 @@ export class ContainerManager extends AsyncTask {
     }
   }
 
-  runForever(): void {}
+  /**
+   * Lifecycle loop for container manager
+   * Continuously checks if any containers exited / crashed. When a container
+   * exits / crashes, logs the container ID as a warning and continues running.
+   * If no running containers remain, logs an error and exits.
+   */
+  run_forever(): void {
+    let runningContainers;
+
+    this.running_containers()
+      .then((_runningContainers) => {
+        runningContainers = _runningContainers;
+
+        const monitorContainers = () => {
+          if (this.shutdown) return;
+
+          this.running_containers()
+            .then((currentContainers) => {
+              console.log(`Running containers: ${currentContainers}`);
+
+              const currentContainerLength = currentContainers.length;
+              const runningContainerLength = runningContainers.length;
+
+              if (currentContainerLength < runningContainerLength) {
+                const failedContainers = runningContainers.filter(
+                  (runningContainer) =>
+                    !currentContainers.includes(runningContainer)
+                );
+
+                console.log(
+                  'Container(s) failed / exited / crashed',
+                  failedContainers
+                );
+              } else if (currentContainerLength > runningContainerLength) {
+                const restartedContainers = currentContainers.filter(
+                  (currentContainer) =>
+                    !runningContainers.includes(currentContainer)
+                );
+
+                console.log('Container(s) back up', restartedContainers);
+              }
+
+              runningContainers = currentContainers;
+
+              setTimeout(monitorContainers, 10_000);
+            })
+            .catch((err) => {
+              throw err;
+            });
+        };
+
+        return monitorContainers();
+      })
+      .catch((err) => {
+        throw err;
+      });
+  }
 
   stop(): void {}
 
