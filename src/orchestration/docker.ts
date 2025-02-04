@@ -181,7 +181,7 @@ export class ContainerManager extends AsyncTask {
    * 4. Starts containers, if not already started.
    * 5. Waits for startup_wait seconds for containers to start.
    */
-  async setup(pruneContainers: boolean = false) {
+  async setup(pruneContainers: boolean = false): Promise<void> {
     if (!this.#managed) {
       console.log(
         'Skipping container manager setup, containers are not managed'
@@ -223,7 +223,7 @@ export class ContainerManager extends AsyncTask {
   /**
    * Pulls all managed images in parallel.
    */
-  async #pull_images() {
+  async #pull_images(): Promise<void> {
     console.info('Pulling images, this may take a while...');
 
     // Pulls images in parallel (each one finishes asynchronously). Resolves once all images have been pulled.
@@ -234,21 +234,26 @@ export class ContainerManager extends AsyncTask {
         this.#images.forEach((image, index) => {
           console.debug(`Pulling image ${image}...`);
 
-          this.client.pull(image, null, (err, stream) => {
-            if (err) {
-              console.error(`Error pulling image ${image}`);
+          this.client.pull(
+            image,
+            { authconfig: this.#creds },
+            (err, stream) => {
+              if (err) {
+                console.error(`Error pulling image ${image}`);
 
-              reject(err);
+                reject(err);
+              }
+
+              this.client.modem.followProgress(stream, () => {
+                console.log(`Successfully pulled image ${image}`);
+
+                pulledImages.push(index);
+
+                // Resolve promise if all images have been successfully pulled.
+                if (pulledImages.length === this.#images.length) resolve(true);
+              });
             }
-
-            this.client.modem.followProgress(stream, () => {
-              console.error(`Successfully pulled image ${image}`);
-
-              pulledImages.push(index);
-
-              if (pulledImages.length === this.#images.length) resolve(true);
-            });
-          });
+          );
         });
       });
     };
