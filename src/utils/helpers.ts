@@ -16,6 +16,7 @@ export const permutations = <T>(
       ? (iterable.split('') as any as T[])
       : iterable;
   const results: T[][] = [];
+
   const createPermutation = (current: T[], remaining: T[]): void => {
     if (current.length === r) {
       results.push(current);
