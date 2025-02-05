@@ -17,7 +17,7 @@ const getUnixTimestamp = (): number => {
   return Math.floor(new Date().getTime() / 1_000);
 };
 
-class Subscription {
+export class Subscription {
   id: number;
   #owner: string;
   #container_lookup: ContainerLookup;
