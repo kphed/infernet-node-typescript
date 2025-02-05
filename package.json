@@ -28,6 +28,7 @@
   "dependencies": {
     "bluebird": "^3.7.2",
     "dockerode": "^4.0.4",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "viem": "^2.22.21"
   }
 }
