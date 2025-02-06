@@ -426,12 +426,13 @@ export class ContainerManager extends AsyncTask {
               );
             }
           } else {
+            const containerPort = '3000/tcp';
             const containerConfig = {
               Image: image,
               ...(port
                 ? {
                     ExposedPorts: {
-                      [`${port}/tcp`]: {},
+                      [containerPort]: {},
                     },
                   }
                 : {}),
@@ -439,7 +440,7 @@ export class ContainerManager extends AsyncTask {
                 ...(port
                   ? {
                       PortBindings: {
-                        [`${port}/tcp`]: [
+                        [containerPort]: [
                           {
                             HostPort: `${port}`,
                           },
