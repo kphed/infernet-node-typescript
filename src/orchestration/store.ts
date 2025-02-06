@@ -1,9 +1,12 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/9e67ac3af88092a8ac181829da33d863fd8ea990/src/orchestration/store.py.
 import { createClient, RedisClientType } from 'redis';
-import { JobResult, JobStatus, ContainerResult } from '../shared/job';
+import {
+  JobLocation,
+  JobResult,
+  JobStatus,
+  ContainerResult,
+} from '../shared/job';
 import { BaseMessage, OffchainMessage } from '../shared/message';
-
-type JobLocation = 'offchain' | 'onchain';
 
 interface StatusCounter {
   success: number;
@@ -11,8 +14,8 @@ interface StatusCounter {
 }
 
 interface JobCounters {
-  offchain: StatusCounter;
-  onchain: StatusCounter;
+  [JobLocation.OFFCHAIN]: StatusCounter;
+  [JobLocation.ONCHAIN]: StatusCounter;
 }
 
 interface ContainerCounters {
@@ -60,8 +63,8 @@ class DataStoreCounters {
    */
   #default_job_counters(): JobCounters {
     return {
-      offchain: { success: 0, failed: 0 },
-      onchain: { success: 0, failed: 0 },
+      [JobLocation.OFFCHAIN]: { success: 0, failed: 0 },
+      [JobLocation.ONCHAIN]: { success: 0, failed: 0 },
     };
   }
 
@@ -165,11 +168,12 @@ export class DataStore {
    * Returns pending counters for onchain and offchain jobs.
    */
   async get_pending_counters(): Promise<{
-    [key: string]: number;
+    [JobLocation.OFFCHAIN]: number;
+    [JobLocation.ONCHAIN]: number;
   }> {
     return {
-      offchain: this.#pending ? await this.#pending.DBSIZE() : 0,
-      onchain: this.#onchain_pending,
+      [JobLocation.OFFCHAIN]: this.#pending ? await this.#pending.DBSIZE() : 0,
+      [JobLocation.ONCHAIN]: this.#onchain_pending,
     };
   }
 
@@ -350,10 +354,10 @@ export class DataStore {
         throw err;
       }
 
-      this.counters.increment_job_counter(successStatus, 'offchain');
+      this.counters.increment_job_counter(successStatus, JobLocation.OFFCHAIN);
     } else {
       this.#onchain_pending -= 1;
-      this.counters.increment_job_counter(successStatus, 'onchain');
+      this.counters.increment_job_counter(successStatus, JobLocation.ONCHAIN);
     }
   }
 
@@ -373,10 +377,10 @@ export class DataStore {
         throw err;
       }
 
-      this.counters.increment_job_counter(failedStatus, 'offchain');
+      this.counters.increment_job_counter(failedStatus, JobLocation.OFFCHAIN);
     } else {
       this.#onchain_pending -= 1;
-      this.counters.increment_job_counter(failedStatus, 'onchain');
+      this.counters.increment_job_counter(failedStatus, JobLocation.ONCHAIN);
     }
   }
 

@@ -1,12 +1,12 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/cf254b9c9601883bd3a716b41028f686cd04b163/src/shared/job.py.
-enum JobLocation {
+export enum JobLocation {
   ONCHAIN = 0,
   OFFCHAIN = 1,
   STREAM = 2,
 }
 
 // Container source, destination, and data.
-interface ContainerInput {
+export interface ContainerInput {
   source: JobLocation.ONCHAIN | JobLocation.OFFCHAIN;
   destination: JobLocation;
   data: any;
@@ -14,7 +14,7 @@ interface ContainerInput {
 }
 
 // Container output.
-interface ContainerOutput {
+export interface ContainerOutput {
   container: string;
   output: {
     [key: string]: any;
@@ -22,7 +22,7 @@ interface ContainerOutput {
 }
 
 // Container error.
-interface ContainerError {
+export interface ContainerError {
   container: string;
   error: string;
 }
@@ -30,7 +30,7 @@ interface ContainerError {
 export type ContainerResult = ContainerError | ContainerOutput;
 
 // Job source, destination, and data.
-interface JobInput {
+export interface JobInput {
   source: JobLocation.ONCHAIN | JobLocation.OFFCHAIN;
   destination: JobLocation;
   data: any;
