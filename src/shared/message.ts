@@ -16,7 +16,7 @@ export interface BaseMessage {
 }
 
 // Off-chain orginating, off-chain delivery job message.
-interface OffchainJobMessage extends BaseMessage {
+export interface OffchainJobMessage extends BaseMessage {
   containers: string[];
   data: { [key: string]: any };
   type: MessageType.OffchainJob;
