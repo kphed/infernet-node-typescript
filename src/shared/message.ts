@@ -10,7 +10,7 @@ enum MessageType {
 }
 
 // Base off-chain message.
-interface BaseMessage {
+export interface BaseMessage {
   id: string;
   ip: string;
 }
@@ -42,7 +42,7 @@ interface SubscriptionCreatedMessage {
 }
 
 // Type alias for off-chain originating message.
-type OffchainMessage = OffchainJobMessage | DelegatedSubscriptionMessage;
+export type OffchainMessage = OffchainJobMessage | DelegatedSubscriptionMessage;
 
 // Type alias for coordinator event messages.
 type CoordinatorMessage = SubscriptionCreatedMessage;
