@@ -1,8 +1,9 @@
-import { BaseMessage } from '../shared/message';
+// Reference: https://github.com/ritual-net/infernet-node/blob/9e67ac3af88092a8ac181829da33d863fd8ea990/src/orchestration/store.py.
+import { createClient, RedisClientType } from 'redis';
+import { JobResult, JobStatus, ContainerResult } from '../shared/job';
+import { BaseMessage, OffchainMessage } from '../shared/message';
 
 type JobLocation = 'offchain' | 'onchain';
-
-type Status = 'success' | 'failed';
 
 interface StatusCounter {
   success: number;
@@ -18,7 +19,8 @@ interface ContainerCounters {
   [key: string]: StatusCounter;
 }
 
-const PENDING_JOB_TTL = 15;
+// 15 minutes in seconds.
+const PENDING_JOB_TTL = 900;
 
 class KeyFormatter {
   /**
@@ -108,14 +110,280 @@ class DataStoreCounters {
   /**
    * Increment job counter.
    */
-  increment_job_counter(status: Status, location: JobLocation): void {
+  increment_job_counter(status: JobStatus, location: JobLocation): void {
     this.job_counters[location][status] += 1;
   }
 
   /**
    * Increment container counter.
    */
-  increment_container_counter(status: Status, container: string): void {
+  increment_container_counter(status: JobStatus, container: string): void {
     this.container_counters[container][status] += 1;
+  }
+}
+
+export class DataStore {
+  counters: DataStoreCounters;
+  #onchain_pending: number;
+  #completed: RedisClientType;
+  #pending: RedisClientType;
+
+  constructor(host: string, port: number) {
+    this.counters = new DataStoreCounters();
+    this.#onchain_pending = 0;
+
+    // Needs to be set up by calling `setup_redis_clients` first.
+    this.#completed = createClient({ socket: { host, port }, database: 0 });
+    this.#pending = createClient({ socket: { host, port }, database: 1 });
+  }
+
+  /**
+   * Set up Redis clients for completed and pending jobs.
+   */
+  async setup_redis_clients(): Promise<void> {
+    try {
+      // Connect to the databases.
+      await this.#completed.connect();
+      await this.#pending.connect();
+
+      // Check connection.
+      await this.#completed.ping();
+      await this.#pending.ping();
+
+      // Flush pending jobs DB.
+      await this.#pending.flushDb();
+    } catch (err) {
+      throw new Error(
+        'Could not set up Redis. Please check your configuration.'
+      );
+    }
+
+    console.log(`Initialized Redis clients`);
+  }
+
+  /**
+   * Returns pending counters for onchain and offchain jobs.
+   */
+  async get_pending_counters(): Promise<{
+    [key: string]: number;
+  }> {
+    return {
+      offchain: this.#pending ? await this.#pending.DBSIZE() : 0,
+      onchain: this.#onchain_pending,
+    };
+  }
+
+  /**
+   * Private method to set job data.
+   *
+   * Sets job data to Redis. If status is "running", sets job as pending. If status
+   * is "success" or "failed", sets job as completed, and removes it from pending.
+   *
+   * NOTE: Pending jobs are set with an expiration time of PENDING_JOB_TTL minutes,
+   * which is a loose upper bound on the time it should take for a job to complete.
+   * This is to ensure crashes and / or incorrect use of the `/status` endpoint do
+   * not leave jobs in a pending state indefinitely.
+   */
+  async #set(
+    message: OffchainMessage,
+    status: JobStatus,
+    results: ContainerResult[] = []
+  ): Promise<void> {
+    const job: JobResult = {
+      id: message.id,
+      status,
+      intermediate_results: results.slice(0, results.length - 1),
+      result: results[results.length - 1],
+    };
+    const formattedMessage = KeyFormatter.format(message);
+
+    try {
+      if (status === 'running') {
+        // Set job as pending. Expiration time is PENDING_JOB_TTL.
+        await this.#pending.setEx(
+          formattedMessage,
+          PENDING_JOB_TTL,
+          JSON.stringify(job)
+        );
+      } else {
+        // Remove job from pending.
+        await this.#pending.del(formattedMessage);
+
+        // Set job as completed.
+        await this.#completed.set(formattedMessage, JSON.stringify(job));
+      }
+    } catch (err) {
+      console.error(`Failed to set job data in Redis DB`, err);
+
+      throw err;
+    }
+  }
+
+  /**
+   * Get job data
+   *
+   * Returns job data from Redis for specified job IDs. Checks pending and completed
+   * jobs DBs. Ignores jobs that are not found. Optionally returns intermediate
+   * results.
+   */
+  async get(
+    messages: BaseMessage[],
+    intermediate: boolean
+  ): Promise<JobResult[]> {
+    try {
+      const keys = messages.map((message) => KeyFormatter.format(message));
+      const completedJobs = (await this.#completed.mGet(keys)) ?? [];
+      const pendingJobs = (await this.#pending.mGet(keys)) ?? [];
+      const parsedJobs: JobResult[] = completedJobs
+        .concat(pendingJobs)
+        .reduce((acc: JobResult[], val: string | null) => {
+          if (val === null) return acc;
+
+          return [...acc, JSON.parse(val)];
+        }, []);
+
+      if (!intermediate)
+        return parsedJobs.map((job) => ({
+          ...job,
+          intermediate_results: [],
+        }));
+
+      return parsedJobs;
+    } catch (err) {
+      throw err;
+    }
+  }
+
+  /**
+   * Get all pending job IDs for given address.
+   */
+  async #get_pending(address: string): Promise<string[]> {
+    try {
+      const scan = await this.#pending.scanIterator({
+        MATCH: KeyFormatter.matchstr_address(address),
+      });
+      const ids: string[] = [];
+
+      for await (const key of scan) {
+        ids.push(KeyFormatter.get_id(key));
+      }
+
+      return ids;
+    } catch (err) {
+      console.log('Unable to get pending job IDs', err);
+
+      throw err;
+    }
+  }
+
+  /**
+   * Get all completed job IDs for given address
+   */
+  async #get_completed(address: string): Promise<string[]> {
+    try {
+      const scan = await this.#completed.scanIterator({
+        MATCH: KeyFormatter.matchstr_address(address),
+      });
+      const ids: string[] = [];
+
+      for await (const key of scan) {
+        ids.push(KeyFormatter.get_id(key));
+      }
+
+      return ids;
+    } catch (err) {
+      console.log('Unable to get completed job IDs', err);
+
+      throw err;
+    }
+  }
+
+  /**
+   * Get all job IDs for given address.
+   *
+   * Optionally filter by pending or completed job status. If pending is undefined,
+   * returns all job IDs.
+   */
+  async get_job_ids(address: string, pending?: boolean): Promise<string[]> {
+    if (pending === true) {
+      return this.#get_pending(address);
+    } else if (pending === false) {
+      return this.#get_completed(address);
+    }
+
+    try {
+      const pendingJobIds = await this.#get_pending(address);
+      const completedJobIds = await this.#get_completed(address);
+
+      return pendingJobIds.concat(completedJobIds);
+    } catch (err) {
+      console.log('Unable to get job IDs', err);
+
+      throw err;
+    }
+  }
+
+  /**
+   * Track running job, store in pending jobs cache if offchain.
+   */
+  async set_running(message?: OffchainMessage): Promise<void> {
+    if (message) {
+      await this.#set(message, 'running');
+    } else {
+      this.#onchain_pending += 1;
+    }
+  }
+
+  /**
+   * Track successful job, store in completed jobs cache if offchain.
+   */
+  async set_success(
+    message: OffchainMessage | undefined,
+    results: ContainerResult[]
+  ): Promise<void> {
+    const successStatus: JobStatus = 'success';
+
+    if (message) {
+      try {
+        await this.#set(message, successStatus, results);
+      } catch (err) {
+        throw err;
+      }
+
+      this.counters.increment_job_counter(successStatus, 'offchain');
+    } else {
+      this.#onchain_pending -= 1;
+      this.counters.increment_job_counter(successStatus, 'onchain');
+    }
+  }
+
+  /**
+   * Track failed job, store in completed jobs cache if offchain.
+   */
+  async set_failed(
+    message: OffchainMessage | undefined,
+    results: ContainerResult[]
+  ): Promise<void> {
+    const failedStatus: JobStatus = 'failed';
+
+    if (message) {
+      try {
+        await this.#set(message, failedStatus, results);
+      } catch (err) {
+        throw err;
+      }
+
+      this.counters.increment_job_counter(failedStatus, 'offchain');
+    } else {
+      this.#onchain_pending -= 1;
+      this.counters.increment_job_counter(failedStatus, 'onchain');
+    }
+  }
+
+  /**
+   * Track container status.
+   */
+  track_container_status(container: string, status: JobStatus): void {
+    this.counters.increment_container_counter(status, container);
   }
 }
