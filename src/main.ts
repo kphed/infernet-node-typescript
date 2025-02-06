@@ -7,6 +7,7 @@ import { Config, loadValidatedConfig } from './shared/config';
 import { checkNodeIsUpToDate } from './version';
 import { assignPorts } from './utils/container';
 import { ContainerManager } from './orchestration/docker';
+import { DataStore } from './orchestration/store';
 
 const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
 
@@ -27,6 +28,10 @@ const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
     );
 
     await containerManager.setup();
+
+    const store = new DataStore(config.redis.host, config.redis.port);
+
+    await store.setup_redis_clients();
   } catch (err) {
     throw `Config file validation failed: ${err}`;
   }
