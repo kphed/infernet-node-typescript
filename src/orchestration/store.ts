@@ -1,11 +1,6 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/9e67ac3af88092a8ac181829da33d863fd8ea990/src/orchestration/store.py.
 import { createClient, RedisClientType } from 'redis';
-import {
-  JobLocation,
-  JobResult,
-  JobStatus,
-  ContainerResult,
-} from '../shared/job';
+import { JobResult, JobStatus, ContainerResult } from '../shared/job';
 import { BaseMessage, OffchainMessage } from '../shared/message';
 
 interface StatusCounter {
@@ -14,8 +9,8 @@ interface StatusCounter {
 }
 
 interface JobCounters {
-  [JobLocation.OFFCHAIN]: StatusCounter;
-  [JobLocation.ONCHAIN]: StatusCounter;
+  offchain: StatusCounter;
+  onchain: StatusCounter;
 }
 
 interface ContainerCounters {
@@ -28,6 +23,7 @@ const PENDING_JOB_TTL = 900;
 class KeyFormatter {
   /**
    * Format key for given message.
+   *
    * Concatenates address and message id to obtain unique key.
    */
   static format({ ip, id }: BaseMessage): string {
@@ -63,8 +59,8 @@ class DataStoreCounters {
    */
   #default_job_counters(): JobCounters {
     return {
-      [JobLocation.OFFCHAIN]: { success: 0, failed: 0 },
-      [JobLocation.ONCHAIN]: { success: 0, failed: 0 },
+      offchain: { success: 0, failed: 0 },
+      onchain: { success: 0, failed: 0 },
     };
   }
 
@@ -113,7 +109,10 @@ class DataStoreCounters {
   /**
    * Increment job counter.
    */
-  increment_job_counter(status: JobStatus, location: JobLocation): void {
+  increment_job_counter(
+    status: JobStatus,
+    location: 'offchain' | 'onchain'
+  ): void {
     this.job_counters[location][status] += 1;
   }
 
@@ -168,12 +167,12 @@ export class DataStore {
    * Returns pending counters for onchain and offchain jobs.
    */
   async get_pending_counters(): Promise<{
-    [JobLocation.OFFCHAIN]: number;
-    [JobLocation.ONCHAIN]: number;
+    offchain: number;
+    onchain: number;
   }> {
     return {
-      [JobLocation.OFFCHAIN]: this.#pending ? await this.#pending.DBSIZE() : 0,
-      [JobLocation.ONCHAIN]: this.#onchain_pending,
+      offchain: await this.#pending.dbSize(),
+      onchain: this.#onchain_pending,
     };
   }
 
@@ -183,7 +182,7 @@ export class DataStore {
    * Sets job data to Redis. If status is "running", sets job as pending. If status
    * is "success" or "failed", sets job as completed, and removes it from pending.
    *
-   * NOTE: Pending jobs are set with an expiration time of PENDING_JOB_TTL minutes,
+   * NOTE: Pending jobs are set with an expiration time of PENDING_JOB_TTL,
    * which is a loose upper bound on the time it should take for a job to complete.
    * This is to ensure crashes and / or incorrect use of the `/status` endpoint do
    * not leave jobs in a pending state indefinitely.
@@ -193,28 +192,24 @@ export class DataStore {
     status: JobStatus,
     results: ContainerResult[] = []
   ): Promise<void> {
-    const job: JobResult = {
+    const job = JSON.stringify({
       id: message.id,
       status,
       intermediate_results: results.slice(0, results.length - 1),
       result: results[results.length - 1],
-    };
+    } as JobResult);
     const formattedMessage = KeyFormatter.format(message);
 
     try {
       if (status === 'running') {
         // Set job as pending. Expiration time is PENDING_JOB_TTL.
-        await this.#pending.setEx(
-          formattedMessage,
-          PENDING_JOB_TTL,
-          JSON.stringify(job)
-        );
+        await this.#pending.setEx(formattedMessage, PENDING_JOB_TTL, job);
       } else {
         // Remove job from pending.
         await this.#pending.del(formattedMessage);
 
         // Set job as completed.
-        await this.#completed.set(formattedMessage, JSON.stringify(job));
+        await this.#completed.set(formattedMessage, job);
       }
     } catch (err) {
       console.error(`Failed to set job data in Redis DB`, err);
@@ -232,7 +227,7 @@ export class DataStore {
    */
   async get(
     messages: BaseMessage[],
-    intermediate: boolean
+    intermediate: boolean = false
   ): Promise<JobResult[]> {
     try {
       const keys = messages.map((message) => KeyFormatter.format(message));
@@ -240,11 +235,11 @@ export class DataStore {
       const pendingJobs = (await this.#pending.mGet(keys)) ?? [];
       const parsedJobs: JobResult[] = completedJobs
         .concat(pendingJobs)
-        .reduce((acc: JobResult[], val: string | null) => {
-          if (val === null) return acc;
-
-          return [...acc, JSON.parse(val)];
-        }, []);
+        .reduce(
+          (acc: JobResult[], val: string | null) =>
+            !val ? acc : [...acc, JSON.parse(val)],
+          []
+        );
 
       if (!intermediate)
         return parsedJobs.map((job) => ({
@@ -348,16 +343,12 @@ export class DataStore {
     const successStatus: JobStatus = 'success';
 
     if (message) {
-      try {
-        await this.#set(message, successStatus, results);
-      } catch (err) {
-        throw err;
-      }
-
-      this.counters.increment_job_counter(successStatus, JobLocation.OFFCHAIN);
+      await this.#set(message, successStatus, results);
+      this.counters.increment_job_counter(successStatus, 'offchain');
     } else {
       this.#onchain_pending -= 1;
-      this.counters.increment_job_counter(successStatus, JobLocation.ONCHAIN);
+
+      this.counters.increment_job_counter(successStatus, 'onchain');
     }
   }
 
@@ -371,16 +362,12 @@ export class DataStore {
     const failedStatus: JobStatus = 'failed';
 
     if (message) {
-      try {
-        await this.#set(message, failedStatus, results);
-      } catch (err) {
-        throw err;
-      }
-
-      this.counters.increment_job_counter(failedStatus, JobLocation.OFFCHAIN);
+      await this.#set(message, failedStatus, results);
+      this.counters.increment_job_counter(failedStatus, 'offchain');
     } else {
       this.#onchain_pending -= 1;
-      this.counters.increment_job_counter(failedStatus, JobLocation.ONCHAIN);
+
+      this.counters.increment_job_counter(failedStatus, 'onchain');
     }
   }
 
