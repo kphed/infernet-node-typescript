@@ -1,4 +1,4 @@
-// Reference: https://github.com/ritual-net/infernet-node/blob/20365ab233119a106a9cb00912f5e97d4315687c/config.sample.json.
+// Reference: https://github.com/ritual-net/infernet-node/blob/073594fc5edafc9e78b8286b943565bd6d5b25c5/src/shared/config.py.
 import fs from 'fs';
 
 export class ConfigRateLimit {
