@@ -305,40 +305,20 @@ export class ContainerManager extends AsyncTask {
   async #pull_images(): Promise<void> {
     console.info('Pulling images, this may take a while...');
 
-    // Pulls images in parallel (each one finishes asynchronously). Resolves once all images have been pulled.
-    const pullImages = () => {
-      const pulledImages: number[] = [];
-
-      return new Promise((resolve, reject) => {
-        this.#images.forEach((image, index) => {
+    try {
+      await Promise.all(
+        this.#images.map(async (image, index) => {
           console.debug(`Pulling image ${image}...`);
 
-          this.client.pull(
-            image,
-            { authconfig: this.#creds },
-            (err, stream) => {
-              if (err) {
-                console.error(`Error pulling image ${image}`);
+          try {
+            await this.client.pull(image, undefined, undefined, this.#creds);
 
-                reject(err);
-              }
-
-              this.client.modem.followProgress(stream, () => {
-                console.log(`Successfully pulled image ${image}`);
-
-                pulledImages.push(index);
-
-                // Resolve promise if all images have been successfully pulled.
-                if (pulledImages.length === this.#images.length) resolve(true);
-              });
-            }
-          );
-        });
-      });
-    };
-
-    try {
-      await pullImages();
+            console.log(`Successfully pulled image ${image}`);
+          } catch (err) {
+            console.error(`Error pulling image ${image}: ${err}`);
+          }
+        })
+      );
     } catch (err) {
       console.error('Could not pull all images.');
 
