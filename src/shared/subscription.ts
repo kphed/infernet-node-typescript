@@ -2,7 +2,7 @@
 import { Address, SignableMessage, getAddress, hashTypedData } from 'viem';
 import { ContainerLookup } from '../chain/containerLookup';
 
-// 2 ** 32 - 1;
+// 2 ** 32 - 1.
 const UINT32_MAX = 4294967295;
 
 const ADDRESS_ZERO = '0x0000000000000000000000000000000000000000';
@@ -13,24 +13,22 @@ const add0x = (hash: string): `0x${string}` => {
   return `0x${hash}`;
 };
 
-const getUnixTimestamp = (): number => {
-  return Math.floor(new Date().getTime() / 1_000);
-};
+const getUnixTimestamp = (): number => Math.floor(new Date().getTime() / 1_000);
 
 export class Subscription {
   id: number;
-  #owner: string;
+  payment_amount: number;
+  payment_token: Address;
+  verifier: Address;
+  owner: Address;
+  containers_hash: `0x${string}`;
+  wallet: Address;
   #container_lookup: ContainerLookup;
   #active_at: number;
   #period: number;
   #frequency: number;
   #redundancy: number;
-  #containers_hash: Buffer;
   #lazy: boolean;
-  #verifier: string;
-  payment_amount: number;
-  #payment_token: string;
-  #wallet: string;
   #responses: {
     [key: number]: number;
   };
@@ -46,7 +44,7 @@ export class Subscription {
     period: number,
     frequency: number,
     redundancy: number,
-    containers_hash: Buffer,
+    containers_hash: string,
     lazy: boolean,
     verifier: string,
     payment_amount: number,
@@ -54,18 +52,18 @@ export class Subscription {
     wallet: string
   ) {
     this.id = id;
+    this.payment_amount = payment_amount;
+    this.payment_token = getAddress(payment_token);
+    this.verifier = getAddress(verifier);
+    this.owner = getAddress(owner);
+    this.containers_hash = add0x(containers_hash);
+    this.wallet = getAddress(wallet);
     this.#container_lookup = container_lookup;
-    this.#owner = owner;
     this.#active_at = active_at;
     this.#period = period;
     this.#frequency = frequency;
     this.#redundancy = redundancy;
-    this.#containers_hash = containers_hash;
     this.#lazy = lazy;
-    this.#verifier = verifier;
-    this.payment_amount = payment_amount;
-    this.#payment_token = payment_token;
-    this.#wallet = wallet;
     this.#responses = {};
     this.#node_replied = {};
   }
@@ -85,20 +83,19 @@ export class Subscription {
   }
 
   /**
-   * Returns subscription owner.
-   */
-  owner(): Address {
-    // Convert owner into a checksum encoded address before returning.
-    return getAddress(this.#owner);
-  }
-
-  /**
    * Returns whether a subscription is past its last interval.
    */
   past_last_interval(): boolean {
     if (!this.active()) return false;
 
     return this.interval() > this.#frequency;
+  }
+
+  /**
+   * Returns whether a subscription is a callback subscription (i.e. period = 0).
+   */
+  is_callback(): boolean {
+    return this.#period === 0;
   }
 
   /**
@@ -121,35 +118,14 @@ export class Subscription {
    * Returns subscription container IDs.
    */
   containers(): string[] {
-    return this.#container_lookup.get_containers(this.containers_hash());
-  }
-
-  /**
-   * Returns subscription container IDs hash.
-   */
-  containers_hash(): `0x${string}` {
-    return add0x(this.#containers_hash.toString('hex'));
-  }
-
-  /**
-   * Returns subscription payment token.
-   */
-  payment_token(): Address {
-    return getAddress(this.#payment_token);
-  }
-
-  /**
-   * Returns subscription verifier address.
-   */
-  verifier(): Address {
-    return getAddress(this.#verifier);
+    return this.#container_lookup.get_containers(this.containers_hash);
   }
 
   /**
    * Returns whether a subscription requires proof.
    */
   requires_proof(): boolean {
-    return this.#verifier !== ADDRESS_ZERO;
+    return this.verifier !== ADDRESS_ZERO;
   }
 
   /**
@@ -157,13 +133,6 @@ export class Subscription {
    */
   provides_payment(): boolean {
     return this.payment_amount > 0;
-  }
-
-  /**
-   * Returns subscription wallet address.
-   */
-  wallet(): Address {
-    return getAddress(this.#wallet);
   }
 
   /**
@@ -192,7 +161,7 @@ export class Subscription {
    * Returns response count by subscription interval.
    */
   get_response_count(interval: number): number {
-    const response = this.#responses[this.interval()];
+    const response = this.#responses[interval];
 
     // If interval is not tracked, return 0.
     if (!response) return 0;
@@ -277,17 +246,17 @@ export class Subscription {
         nonce,
         expiry,
         sub: {
-          owner: this.owner(),
+          owner: this.owner,
           activeAt: this.#active_at,
           period: this.#period,
           frequency: this.#frequency,
           redundancy: this.#redundancy,
-          containerId: this.containers_hash(),
+          containerId: this.containers_hash,
           lazy: this.#lazy,
-          verifier: this.verifier(),
+          verifier: this.verifier,
           paymentAmount: BigInt(this.payment_amount),
-          paymentToken: this.payment_token(),
-          wallet: this.wallet(),
+          paymentToken: this.payment_token,
+          wallet: this.wallet,
         },
       },
     });
@@ -302,7 +271,7 @@ export class Subscription {
     number,
     number,
     number,
-    Buffer,
+    string,
     boolean,
     string,
     number,
@@ -310,17 +279,17 @@ export class Subscription {
     string
   ] {
     return [
-      this.owner(),
+      this.owner,
       this.#active_at,
       this.#period,
       this.#frequency,
       this.#redundancy,
-      this.#containers_hash,
+      this.containers_hash,
       this.#lazy,
-      this.#verifier,
+      this.verifier,
       this.payment_amount,
-      this.#payment_token,
-      this.#wallet,
+      this.payment_token,
+      this.wallet,
     ];
   }
 }
@@ -349,7 +318,7 @@ export class SerializedSubscription {
       this.period,
       this.frequency,
       this.redundancy,
-      Buffer.from(this.containers, 'hex'),
+      this.containers,
       this.lazy,
       this.verifier,
       this.payment_amount,
