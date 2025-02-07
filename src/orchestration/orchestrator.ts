@@ -1,5 +1,4 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/0a5c6cba32e48561338142ef6fabeba3a11057e4/src/orchestration/orchestrator.py.
-import BluebirdPromise from 'bluebird';
 import {
   ContainerError,
   ContainerOutput,

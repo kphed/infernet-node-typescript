@@ -26,7 +26,6 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "bluebird": "^3.7.2",
     "dockerode": "^4.0.4",
     "dotenv": "^16.4.7",
     "redis": "^4.7.0",
