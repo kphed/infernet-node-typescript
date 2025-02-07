@@ -1,4 +1,4 @@
-// Reference: https://github.com/ritual-net/infernet-node/blob/7418dff0b55ba85c27b8764529f5e5f0aa9cbdb3/src/chain/container_lookup.py.
+// Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/chain/container_lookup.py.
 import { keccak256, encodeAbiParameters } from 'viem';
 import { permutations } from '../utils/helpers';
 import { InfernetContainer } from '../shared/config';
@@ -47,12 +47,7 @@ export class ContainerLookup {
       configs.map(({ id }) => id)
     );
     const calculateHash = (permutation: string): string =>
-      keccak256(
-        encodeAbiParameters(
-          [{ name: 'container', type: 'string' }],
-          [permutation]
-        )
-      );
+      keccak256(encodeAbiParameters([{ type: 'string' }], [permutation]));
 
     // Compute hashes for each of the container ID permutations.
     this.#container_lookup = allPermutations.reduce((acc, val) => {
