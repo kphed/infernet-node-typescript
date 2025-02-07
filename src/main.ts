@@ -8,6 +8,8 @@ import { checkNodeIsUpToDate } from './version';
 import { assignPorts } from './utils/container';
 import { ContainerManager } from './orchestration/docker';
 import { DataStore } from './orchestration/store';
+import { Orchestrator } from './orchestration/orchestrator';
+import { ContainerLookup } from './chain/containerLookup';
 
 const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
 
@@ -32,6 +34,9 @@ const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
     const store = new DataStore(config.redis.host, config.redis.port);
 
     await store.setup_redis_clients();
+
+    const orchestrator = new Orchestrator(containerManager, store);
+    const containerLookup = new ContainerLookup(config.containers);
   } catch (err) {
     throw `Config file validation failed: ${err}`;
   }

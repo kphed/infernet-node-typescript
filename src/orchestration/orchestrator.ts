@@ -17,7 +17,7 @@ const RUN_JOB_TIMEOUT = 180_000;
 // 1 minute.
 const PROCESS_STREAMING_JOB_TIMEOUT = 60_000;
 
-class Orchestrator {
+export class Orchestrator {
   #manager: ContainerManager;
   #store: DataStore;
   #host: string;
