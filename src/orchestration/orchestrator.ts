@@ -79,11 +79,7 @@ class Orchestrator {
     message?: OffchainJobMessage,
     requires_proof?: boolean
   ): Promise<ContainerResult[]> {
-    try {
-      await this.#store.set_running(message);
-    } catch (err) {
-      throw err;
-    }
+    await this.#store.set_running(message);
 
     const results: ContainerResult[] = [];
 
@@ -119,7 +115,7 @@ class Orchestrator {
 
         const output = await response.json();
 
-        results.push({ container, output } as ContainerOutput);
+        results.push({ container, output });
 
         this.#store.track_container_status(container, 'success');
 
@@ -293,60 +289,40 @@ class Orchestrator {
   }> {
     const runningContainerIds: string[] =
       await this.#manager.running_containers();
-    const makeContainerServiceResourcesUrl = (containerId: string): string => {
+
+    const makeContainerUrl = (containerId: string): string => {
       const port = this.#manager.get_port(containerId);
+      const baseUrl = `http://${this.#host}:${port}/service-resources`;
 
-      return model_id
-        ? `http://${this.#host}:${port}/service-resources?model_id=${model_id}`
-        : `http://${this.#host}:${port}/service-resources`;
+      return model_id ? `${baseUrl}?model_id=${model_id}` : baseUrl;
     };
-    const fetchContainerServiceResources = (): Promise<{
-      [key: string]: any;
-    }> => {
-      const results: {
-        [key: string]: any;
-      } = {};
 
-      return new Promise((resolve) => {
-        runningContainerIds.forEach((containerId) => {
-          const url = makeContainerServiceResourcesUrl(containerId);
+    const containerResources = await Promise.all(
+      runningContainerIds.map(async (containerId) => {
+        const url = makeContainerUrl(containerId);
 
-          return fetch(url)
-            .then((response) => {
-              if (response.status !== 200)
-                throw new Error('Response status not OK.');
+        try {
+          const response = await fetch(url);
 
-              response.json().then((data) => {
-                results[containerId] = data;
+          if (response.status !== 200)
+            throw new Error('Response status not OK.');
 
-                if (Object.keys(results).length === runningContainerIds.length)
-                  resolve(results);
-              });
-            })
-            .catch((err) => {
-              console.error(`Error fetching data from ${url}: ${err}`);
+          return [containerId, await response.json()];
+        } catch (err) {
+          console.error(`Error fetching data from ${url}: ${err}`);
+        }
+      })
+    );
 
-              results[containerId] = undefined;
+    return containerResources.reduce((acc, val) => {
+      if (!val) return acc;
 
-              if (Object.keys(results).length === runningContainerIds.length)
-                resolve(results);
-            });
-        });
-      });
-    };
-    const serviceResources: {
-      [key: string]: any;
-    } = await fetchContainerServiceResources();
+      const [containerId, data] = val;
 
-    return Object.keys(serviceResources).reduce((acc, containerId) => {
-      const containerResources = serviceResources[containerId];
-
-      return containerResources
-        ? {
-            ...acc,
-            [containerId]: containerResources,
-          }
-        : acc;
+      return {
+        ...acc,
+        [containerId]: data,
+      };
     }, {});
   }
 }
