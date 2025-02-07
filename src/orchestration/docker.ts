@@ -1,5 +1,5 @@
+// Reference: https://github.com/ritual-net/infernet-node/blob/44c4cc8acadd3c6904b74adaa595ac002ded0ebf/src/orchestration/docker.py.
 import Docker from 'dockerode';
-import BluebirdPromise from 'bluebird';
 import { InfernetContainer, ConfigDocker } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import dockerClient from '../docker/client';
@@ -283,9 +283,8 @@ export class ContainerManager extends AsyncTask {
     if (this.#managed) {
       console.log('Stopping containers');
 
-      await BluebirdPromise.each(
-        Object.keys(this.#containers),
-        async (containerKey) => {
+      await Promise.all(
+        Object.keys(this.#containers).map(async (containerKey) => {
           try {
             await this.#containers[containerKey].stop({
               abortSignal: AbortSignal.timeout(DEFAULT_CONTAINER_STOP_TIMEOUT),
@@ -293,7 +292,7 @@ export class ContainerManager extends AsyncTask {
           } catch (err) {
             console.error(`Error stopping container ${containerKey}`, err);
           }
-        }
+        })
       );
     }
   }
@@ -363,21 +362,23 @@ export class ContainerManager extends AsyncTask {
         {}
       );
 
-      await BluebirdPromise.each(this.#configs, async (config) => {
-        const containerId = containers[config.id];
+      await Promise.all(
+        this.#configs.map(async (config) => {
+          const containerId = containers[config.id];
 
-        if (!containerId) return;
+          if (!containerId) return;
 
-        console.warn(`Pruning container ${containerId}`);
+          console.warn(`Pruning container ${containerId}`);
 
-        try {
-          await this.client.getContainer(containerId).remove({ force: true });
-        } catch (err) {
-          console.error(`Error pruning container ${containerId}`);
+          try {
+            await this.client.getContainer(containerId).remove({ force: true });
+          } catch (err) {
+            console.error(`Error pruning container ${containerId}`);
 
-          throw err;
-        }
-      });
+            throw err;
+          }
+        })
+      );
     } catch (err) {
       console.error('Error pruning containers');
 
@@ -408,93 +409,94 @@ export class ContainerManager extends AsyncTask {
         };
       }, {});
 
-      await BluebirdPromise.each(
-        this.#configs,
-        async ({ id, image, port, env, gpu, volumes, command }) => {
-          const existingContainer = existingContainers[image];
-          let container;
+      await Promise.all(
+        this.#configs.map(
+          async ({ id, image, port, env, gpu, volumes, command }) => {
+            const existingContainer = existingContainers[image];
+            let container;
 
-          // If the container exists and is not running, start the container.
-          if (existingContainer) {
-            container = this.client.getContainer(existingContainer.id);
+            // If the container exists and is not running, start the container.
+            if (existingContainer) {
+              container = this.client.getContainer(existingContainer.id);
 
-            if (!existingContainer.isRunning) {
-              await container.start();
+              if (!existingContainer.isRunning) {
+                await container.start();
 
-              console.info(
-                `Started existing container '${id}' on port ${port}`
-              );
-            }
-          } else {
-            const containerPort = '3000/tcp';
-            const containerConfig = {
-              Image: image,
-              ...(port
-                ? {
-                    ExposedPorts: {
-                      [containerPort]: {},
-                    },
-                  }
-                : {}),
-              HostConfig: {
+                console.info(
+                  `Started existing container '${id}' on port ${port}`
+                );
+              }
+            } else {
+              const containerPort = '3000/tcp';
+              const containerConfig = {
+                Image: image,
                 ...(port
                   ? {
-                      PortBindings: {
-                        [containerPort]: [
+                      ExposedPorts: {
+                        [containerPort]: {},
+                      },
+                    }
+                  : {}),
+                HostConfig: {
+                  ...(port
+                    ? {
+                        PortBindings: {
+                          [containerPort]: [
+                            {
+                              HostPort: `${port}`,
+                            },
+                          ],
+                        },
+                        PublishAllPorts: true,
+                      }
+                    : {}),
+                  RestartPolicy: {
+                    Name: 'on-failure',
+                    MaximumRetryCount: 5,
+                  },
+                  ...(gpu
+                    ? {
+                        DeviceRequests: [
                           {
-                            HostPort: `${port}`,
+                            Driver: 'nvidia',
+                            Count: -1,
                           },
                         ],
-                      },
-                      PublishAllPorts: true,
-                    }
-                  : {}),
-                RestartPolicy: {
-                  Name: 'on-failure',
-                  MaximumRetryCount: 5,
+                      }
+                    : {}),
                 },
-                ...(gpu
+                ...(command ? { Cmd: command } : {}),
+                ...(env && Object.keys(env).length
                   ? {
-                      DeviceRequests: [
-                        {
-                          Driver: 'nvidia',
-                          Count: -1,
-                        },
-                      ],
+                      Env: Object.keys(env).reduce(
+                        (acc: string[], val) => [...acc, `${val}=${env[val]}`],
+                        []
+                      ),
                     }
                   : {}),
-              },
-              ...(command ? { Cmd: command } : {}),
-              ...(env && Object.keys(env).length
-                ? {
-                    Env: Object.keys(env).reduce(
-                      (acc: string[], val) => [...acc, `${val}=${env[val]}`],
-                      []
-                    ),
-                  }
-                : {}),
-              ...(volumes && volumes.length
-                ? {
-                    Volumes: volumes.reduce(
-                      (acc, val) => ({ ...acc, [val]: {} }),
-                      {}
-                    ),
-                  }
-                : {}),
-            };
+                ...(volumes && volumes.length
+                  ? {
+                      Volumes: volumes.reduce(
+                        (acc, val) => ({ ...acc, [val]: {} }),
+                        {}
+                      ),
+                    }
+                  : {}),
+              };
 
-            // If the container does not exist, create and run a new container with the given configuration.
-            container = await this.client.createContainer(containerConfig);
+              // If the container does not exist, create and run a new container with the given configuration.
+              container = await this.client.createContainer(containerConfig);
 
-            await container.rename({ name: id });
-            await container.start();
+              await container.rename({ name: id });
+              await container.start();
 
-            console.info(`Started new container '${id}' on port ${port}`);
+              console.info(`Started new container '${id}' on port ${port}`);
+            }
+
+            // Store existing container object in state.
+            this.#containers[id] = container;
           }
-
-          // Store existing container object in state.
-          this.#containers[id] = container;
-        }
+        )
       );
     } catch (err) {
       throw err;
