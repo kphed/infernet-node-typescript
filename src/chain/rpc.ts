@@ -77,10 +77,7 @@ export class RPC {
   /**
    * Given contract details, creates new Contract instance.
    */
-  get_contract(
-    address: Address,
-    abi: Abi
-  ): GetContractReturnType<Abi, WalletClient, Address> {
+  get_contract(address: Address, abi: Abi) {
     return getContract({
       address,
       abi,
