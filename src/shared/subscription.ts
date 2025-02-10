@@ -1,11 +1,7 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/7418dff0b55ba85c27b8764529f5e5f0aa9cbdb3/src/shared/subscription.py.
 import { Address, SignableMessage, getAddress, hashTypedData } from 'viem';
 import { ContainerLookup } from '../chain/containerLookup';
-
-// 2 ** 32 - 1.
-const UINT32_MAX = 4294967295;
-
-const ADDRESS_ZERO = '0x0000000000000000000000000000000000000000';
+import { UINT32_MAX, ZERO_ADDRESS } from '../utils/constants';
 
 const add0x = (hash: string): `0x${string}` => {
   if (hash.substring(0, 2) === '0x') return hash as `0x${string}`;
@@ -125,7 +121,7 @@ export class Subscription {
    * Returns whether a subscription requires proof.
    */
   requires_proof(): boolean {
-    return this.verifier !== ADDRESS_ZERO;
+    return this.verifier !== ZERO_ADDRESS;
   }
 
   /**
