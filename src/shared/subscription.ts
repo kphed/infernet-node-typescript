@@ -1,5 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/7418dff0b55ba85c27b8764529f5e5f0aa9cbdb3/src/shared/subscription.py.
-import { Address, SignableMessage, getAddress, hashTypedData } from 'viem';
+import { Address, Hex, getAddress, hashTypedData } from 'viem';
 import { ContainerLookup } from '../chain/containerLookup';
 import { UINT32_MAX, ZERO_ADDRESS } from '../utils/constants';
 
@@ -35,7 +35,7 @@ export class Subscription {
   constructor(
     id: number,
     container_lookup: ContainerLookup,
-    owner: string,
+    owner: Address,
     active_at: number,
     period: number,
     frequency: number,
@@ -203,7 +203,7 @@ export class Subscription {
     expiry: number,
     chain_id: number,
     verifying_contract: Address
-  ): SignableMessage {
+  ): Hex {
     return hashTypedData({
       domain: {
         name: 'InfernetCoordinator',
@@ -292,7 +292,7 @@ export class Subscription {
 
 export class SerializedSubscription {
   constructor(
-    public owner: string,
+    public owner: Address,
     public active_at: number,
     public period: number,
     public frequency: number,

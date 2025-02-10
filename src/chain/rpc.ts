@@ -19,6 +19,7 @@ import {
   PublicClient,
   GetLogsReturnType,
   TransactionSerializedGeneric,
+  Client,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { delay } from '../utils/helpers';
@@ -77,7 +78,10 @@ export class RPC {
   /**
    * Given contract details, creates new Contract instance.
    */
-  get_contract(address: Address, abi: Abi) {
+  get_contract(
+    address: Address,
+    abi: Abi
+  ): GetContractReturnType<Abi, Client, Address> {
     return getContract({
       address,
       abi,
