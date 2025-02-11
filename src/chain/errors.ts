@@ -77,7 +77,10 @@ class InfernetError extends Error {}
  * Checks if the error belongs to the infernet contracts based on its 4-byte signature,
  * and if it does, prints a helpful message and raises an InfernetError.
  */
-const raise_if_infernet_error = (encodedError: Hex, sub: Subscription) => {
+export const raise_if_infernet_error = (
+  encodedError: Hex,
+  sub: Subscription
+) => {
   const errors = {
     [CoordinatorError.InvalidWallet]: invalid_wallet_error,
     [CoordinatorError.IntervalMismatch]: interval_mismatch_error,

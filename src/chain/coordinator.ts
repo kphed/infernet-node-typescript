@@ -27,7 +27,7 @@ enum CoordinatorEvent {
   SubscriptionFulfilled = 'SubscriptionFulfilled(uint32,address)',
 }
 
-interface CoordinatorDeliveryParams {
+export interface CoordinatorDeliveryParams {
   subscription: Subscription;
   interval: number;
   input: Hex;
