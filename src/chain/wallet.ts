@@ -72,7 +72,7 @@ export class Wallet {
   async #simulate_transaction(
     fn: any,
     subscription: Subscription
-  ): Promise<any> {
+  ): Promise<boolean> {
     const simulateWithRetries = async (retries: number = 3) => {
       try {
         // `fn` should be a function that calls the contract method with the args passed as options.
@@ -80,14 +80,6 @@ export class Wallet {
 
         return false;
       } catch (err: any) {
-        // Simulates the function call, retrying 3 times with a delay of 0.5 and raises if
-        // there are errors.
-        if (retries) {
-          await delay(500);
-
-          return simulateWithRetries(retries - 1);
-        }
-
         // Simulation errors may be bypassed if they are in the `allowed_sim_errors` list.
         // In which case, the simulation is considered to have passed.
         if (
@@ -97,40 +89,46 @@ export class Wallet {
         )
           return true;
 
+        if (err instanceof BaseError) {
+          const revertError = err.walk(
+            (err) =>
+              err instanceof ContractFunctionRevertedError ||
+              err instanceof ContractFunctionExecutionError
+          );
+          const functionReverted =
+            revertError instanceof ContractFunctionRevertedError;
+          const executionError =
+            revertError instanceof ContractFunctionExecutionError;
+
+          if (functionReverted && revertError.raw) {
+            // For infernet-specific errors, more verbose logging is provided, and an `InfernetError` is thrown.
+            raise_if_infernet_error(revertError.raw, subscription);
+
+            // If the error is not infernet-specific, log it.
+            console.error('Failed to simulate transaction', {
+              error: revertError,
+              subscription: subscription,
+            });
+          } else if (executionError) {
+            console.warn('Contract logic error while simulating', {
+              error: revertError,
+              subscription: subscription,
+            });
+          }
+
+          // Retry 3 times with a delay of 0.5 seconds if an error type matches and if there are retries remaining.
+          if ((functionReverted || executionError) && retries) {
+            await delay(500);
+
+            return simulateWithRetries(retries - 1);
+          }
+        }
+
         throw err;
       }
     };
 
-    try {
-      return simulateWithRetries();
-    } catch (err) {
-      if (err instanceof BaseError) {
-        const revertError = err.walk(
-          (err) => err instanceof ContractFunctionRevertedError
-        );
-
-        if (
-          revertError instanceof ContractFunctionRevertedError &&
-          revertError.raw
-        ) {
-          // For infernet-specific errors, more verbose logging is provided, and an `InfernetError` is thrown.
-          raise_if_infernet_error(revertError.raw, subscription);
-
-          // If the error is not infernet-specific, log it.
-          console.error('Failed to simulate transaction', {
-            error: revertError,
-            subscription: subscription,
-          });
-        } else {
-          console.warn('Contract logic error while simulating', {
-            error: revertError,
-            subscription: subscription,
-          });
-        }
-
-        throw revertError;
-      }
-    }
+    return simulateWithRetries();
   }
 
   /**
