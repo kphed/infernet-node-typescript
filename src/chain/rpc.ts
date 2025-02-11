@@ -27,13 +27,13 @@ import { delay } from '../utils/helpers';
 export class RPC {
   #rpc_url: string;
   #private_key: Hex;
-  #client: PublicClient;
+  publicClient: PublicClient;
   web3: WalletClient;
 
   constructor(rpc_url: string, private_key: Hex) {
     this.#rpc_url = rpc_url;
     this.#private_key = private_key;
-    this.#client = createPublicClient({
+    this.publicClient = createPublicClient({
       transport: http(rpc_url),
     });
     this.web3 = createWalletClient({
@@ -100,7 +100,7 @@ export class RPC {
    * Collects nonce for an address.
    */
   async get_nonce(address: Address): Promise<GetTransactionCountReturnType> {
-    return this.#client.getTransactionCount({
+    return this.publicClient.getTransactionCount({
       address,
     });
   }
@@ -109,7 +109,7 @@ export class RPC {
    * Collects block data by block number.
    */
   async get_block_by_number(block_number: number) {
-    return this.#client.getBlock({
+    return this.publicClient.getBlock({
       blockNumber: BigInt(block_number),
     });
   }
@@ -118,7 +118,7 @@ export class RPC {
    * Collects latest confirmed block number from chain.
    */
   async get_head_block_number(): Promise<GetBlockNumberReturnType> {
-    return this.#client.getBlockNumber();
+    return this.publicClient.getBlockNumber();
   }
   /**
    * Collects tx success status by tx_hash with retries.
@@ -144,7 +144,7 @@ export class RPC {
    */
   async get_tx_success(tx_hash: Hex): Promise<[boolean, boolean]> {
     try {
-      const { status } = await this.#client.getTransactionReceipt({
+      const { status } = await this.publicClient.getTransactionReceipt({
         hash: tx_hash,
       });
 
@@ -160,13 +160,13 @@ export class RPC {
    * TODO: Bridge web3.py and viem differences.
    */
   async get_event_logs(params): Promise<GetLogsReturnType> {
-    const filter = await this.#client.createEventFilter();
+    const filter = await this.publicClient.createEventFilter();
 
     console.log('Created event filter', {
       id: filter.id,
     });
 
-    const logs = await this.#client.getFilterLogs({ filter });
+    const logs = await this.publicClient.getFilterLogs({ filter });
 
     console.log('Collected event logs', {
       count: logs.length,
@@ -179,7 +179,7 @@ export class RPC {
    * Collects balance for an address.
    */
   async get_balance(address: Address): Promise<bigint> {
-    return this.#client.getBalance({ address });
+    return this.publicClient.getBalance({ address });
   }
 
   /**
