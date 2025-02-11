@@ -9,7 +9,7 @@ import {
   Client,
   serializeSignature,
   recoverAddress,
-  WriteContractReturnType,
+  SimulateContractReturnType,
 } from 'viem';
 import { RPC } from './rpc';
 import {
@@ -166,49 +166,73 @@ export class Coordinator {
   }
 
   /**
-   * Generates a contract function to call Coordinator.deliverCompute().
+   * Returns a function with method args encapsulated for simulating and
+   * calling Coordinator.deliverCompute().
    */
   get_deliver_compute_tx_contract_function(
     data: CoordinatorDeliveryParams
-  ): Promise<WriteContractReturnType> {
-    return this.#contract.write.deliverCompute([
-      data.subscription.id,
-      data.interval,
-      data.input,
-      data.output,
-      data.proof,
-      data.node_wallet,
-    ]);
+  ): (options: any) => Promise<SimulateContractReturnType> {
+    return (options: any) =>
+      this.#contract.simulate.deliverCompute(
+        [
+          data.subscription.id,
+          data.interval,
+          data.input,
+          data.output,
+          data.proof,
+          data.node_wallet,
+        ],
+        options
+      );
+  }
+
+  /**
+   * Returns a function with method args encapsulated for simulating
+   * and calling Coordinator.deliverComputeDelegatee().
+   */
+  get_deliver_compute_delegatee_tx_contract_function(
+    data: CoordinatorDeliveryParams,
+    signature: CoordinatorSignatureParams
+  ): (options: any) => Promise<SimulateContractReturnType> {
+    return (options: any) =>
+      this.#contract.simulate.deliverComputeDelegatee(
+        [
+          signature.nonce,
+          signature.expiry,
+          data.subscription.get_tx_inputs(),
+          signature.v,
+          signature.r,
+          signature.s,
+          data.interval,
+          data.input,
+          data.output,
+          data.proof,
+          data.node_wallet,
+        ],
+        options
+      );
   }
 
   /**
    * Generates tx to call Coordinator.deliverComputeDelegatee().
    */
-  get_deliver_compute_delegatee_tx(
+  async get_deliver_compute_delegatee_tx(
     data: CoordinatorDeliveryParams,
     tx_params: CoordinatorTxParams,
     signature: CoordinatorSignatureParams
   ) {
-    return this.#contract.write.deliverComputeDelegatee(
-      [
-        signature.nonce,
-        signature.expiry,
-        data.subscription.get_tx_inputs(),
-        signature.v,
-        signature.r,
-        signature.s,
-        data.interval,
-        data.input,
-        data.output,
-        data.proof,
-        data.node_wallet,
-      ],
-      {
-        nonce: tx_params.nonce,
-        from: tx_params.sender,
-        gas: tx_params.gas_limit,
-      }
-    );
+    const { request }: any =
+      await this.get_deliver_compute_delegatee_tx_contract_function(
+        data,
+        signature
+      );
+
+    return this.#rpc.web3.writeContract({
+      ...request,
+      nonce: tx_params.nonce,
+      from: tx_params.sender,
+      gas: tx_params.gas_limit,
+    });
   }
 
   /**
