@@ -6,7 +6,7 @@ import {
   Hex,
   Address,
   isAddress,
-  encodePacked,
+  encodeAbiParameters,
   keccak256,
   getAddress,
   toEventHash,
@@ -58,7 +58,9 @@ export class RPC {
    * Returns a keccak256 hash of packed ABI-encoded values.
    */
   static get_keccak(abi_types: string[], values: any[]): Hex {
-    return keccak256(encodePacked(abi_types, values));
+    const abiTypes = abi_types.map((type) => ({ type }));
+
+    return keccak256(encodeAbiParameters(abiTypes, values));
   }
 
   /**
