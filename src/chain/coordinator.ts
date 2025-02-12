@@ -153,10 +153,12 @@ export class Coordinator {
       chainId,
       this.#checksum_address
     );
+
+    // Consider using `yParity` in the future since `v` is deprecated: https://github.com/wevm/viem/blob/main/src/types/misc.ts#L23.
     const serializedSignature = serializeSignature({
       r: signature.r as Hex,
       s: signature.s as Hex,
-      yParity: signature.v,
+      v: BigInt(signature.v),
     });
 
     return recoverAddress({
