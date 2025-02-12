@@ -172,4 +172,47 @@ export class Wallet {
 
     return this.#rpc.web3.writeContract(request);
   }
+
+  /**
+   * Send Coordinator.deliverComputeDelegatee() tx.
+   *
+   * Transactions are first simulated using `.call()` to prevent submission of invalid
+   * transactions that result in the user's gas being wasted.
+   *
+   * If a simulation passes & transaction still fails, it will be retried thrice.
+   */
+  async deliver_compute_delegatee(
+    subscription: Subscription,
+    signature: CoordinatorSignatureParams,
+    input: Hex,
+    output: Hex,
+    proof: Hex,
+    simulate_only: boolean
+  ): Promise<Hex> {
+    const fn =
+      this.#coordinator.get_deliver_compute_delegatee_tx_contract_function(
+        {
+          subscription,
+          interval: subscription.interval(),
+          input,
+          output,
+          proof,
+          node_wallet: this.payment_address,
+        },
+        signature
+      );
+    const skipped = await this.#simulate_transaction(fn, subscription);
+
+    if (simulate_only) return '0x';
+
+    const { request }: any = await fn({});
+
+    if (skipped)
+      return this.#rpc.web3.writeContract({
+        ...request,
+        gas: this.#max_gas_limit,
+      });
+
+    return this.#rpc.web3.writeContract(request);
+  }
 }
