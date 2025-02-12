@@ -7,6 +7,7 @@ import {
   ContractFunctionExecutionError,
 } from 'viem';
 import { privateKeyToAccount, PrivateKeyAccount } from 'viem/accounts';
+import { Mutex } from 'async-mutex';
 import {
   Coordinator,
   CoordinatorDeliveryParams,
@@ -24,6 +25,7 @@ export class Wallet {
   #max_gas_limit: BigInt;
   #account: PrivateKeyAccount;
   #allowed_sim_errors: string[];
+  #tx_lock: Mutex;
   payment_address: Address;
 
   constructor(
@@ -43,6 +45,7 @@ export class Wallet {
     this.#account = privateKeyToAccount(private_key);
     this.#allowed_sim_errors = allowed_sim_errors;
     this.payment_address = payment_address;
+    this.#tx_lock = new Mutex();
 
     console.debug('Initialized Wallet', {
       address: this.#account.address,
@@ -156,21 +159,25 @@ export class Wallet {
     const fn =
       this.#coordinator.get_deliver_compute_tx_contract_function(fnArgs);
     const skipped = await this.#simulate_transaction(fn, subscription);
+    let txHash: Hex = '0x';
 
-    if (simulate_only) return '0x';
+    if (simulate_only) return txHash;
 
-    const { request }: any = await fn({});
+    const txOptions: any = {};
 
     // By default, gas gets estimated (which includes a simulation call)
     // if we're purposefully skipping an error in simulation, we need to set gas
-    // limit manually
-    if (skipped)
-      return this.#rpc.web3.writeContract({
-        ...request,
-        gas: this.#max_gas_limit,
-      });
+    // limit manually.
+    if (skipped) txOptions.gas = this.#max_gas_limit;
 
-    return this.#rpc.web3.writeContract(request);
+    // Executes the callback once the mutex is unlocked.
+    await this.#tx_lock.runExclusive(async () => {
+      const { request }: any = await fn(txOptions);
+
+      txHash = await this.#rpc.web3.writeContract(request);
+    });
+
+    return txHash;
   }
 
   /**
@@ -203,17 +210,21 @@ export class Wallet {
         signature
       );
     const skipped = await this.#simulate_transaction(fn, subscription);
+    let txHash: Hex = '0x';
 
-    if (simulate_only) return '0x';
+    if (simulate_only) return txHash;
 
-    const { request }: any = await fn({});
+    const txOptions: any = {};
 
-    if (skipped)
-      return this.#rpc.web3.writeContract({
-        ...request,
-        gas: this.#max_gas_limit,
-      });
+    if (skipped) txOptions.gas = this.#max_gas_limit;
 
-    return this.#rpc.web3.writeContract(request);
+    // Executes the callback once the mutex is unlocked.
+    await this.#tx_lock.runExclusive(async () => {
+      const { request }: any = await fn(txOptions);
+
+      txHash = await this.#rpc.web3.writeContract(request);
+    });
+
+    return txHash;
   }
 }
