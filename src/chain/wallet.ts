@@ -2,8 +2,6 @@
 import {
   Hex,
   Address,
-  Abi,
-  Client,
   BaseError,
   ContractFunctionRevertedError,
   ContractFunctionExecutionError,
@@ -147,14 +145,16 @@ export class Wallet {
     proof: Hex,
     simulate_only: boolean
   ): Promise<Hex> {
-    const fn = this.#coordinator.get_deliver_compute_tx_contract_function({
+    const fnArgs: CoordinatorDeliveryParams = {
       subscription,
       interval: subscription.interval(),
       input,
       output,
       proof,
       node_wallet: this.payment_address,
-    });
+    };
+    const fn =
+      this.#coordinator.get_deliver_compute_tx_contract_function(fnArgs);
     const skipped = await this.#simulate_transaction(fn, subscription);
 
     if (simulate_only) return '0x';
@@ -189,16 +189,17 @@ export class Wallet {
     proof: Hex,
     simulate_only: boolean
   ): Promise<Hex> {
+    const fnArgs: CoordinatorDeliveryParams = {
+      subscription,
+      interval: subscription.interval(),
+      input,
+      output,
+      proof,
+      node_wallet: this.payment_address,
+    };
     const fn =
       this.#coordinator.get_deliver_compute_delegatee_tx_contract_function(
-        {
-          subscription,
-          interval: subscription.interval(),
-          input,
-          output,
-          proof,
-          node_wallet: this.payment_address,
-        },
+        fnArgs,
         signature
       );
     const skipped = await this.#simulate_transaction(fn, subscription);
