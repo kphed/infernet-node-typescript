@@ -1,5 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/2632a0b43b54216fb9616ff0c925edfdf48d7004/src/chain/processor.py.
-import { Hex } from 'viem';
+import { encodeAbiParameters, Hex, stringToHex } from 'viem';
 import { Mutex } from 'async-mutex';
 import { Coordinator, CoordinatorSignatureParams } from './coordinator';
 import { InfernetError } from './errors';
@@ -347,6 +347,138 @@ class ChainProcessor extends AsyncTask {
         }
       });
     });
+  }
+
+  /**
+   * Stops tracking subscription (or delegated subscription).
+   * 1. Deletes subscription from _subscriptions or _delegate_subscriptions.
+   * 2. Deletes any pending transactions being checked.
+   */
+  #stop_tracking(subscription_id: UnionID, delegated: boolean): void {
+    const subIdKey = Array.isArray(subscription_id)
+      ? makeDelegateSubscriptionsKey(subscription_id[0], subscription_id[1])
+      : `${subscription_id}`;
+
+    if (delegated) {
+      if (this.#delegate_subscriptions[subIdKey])
+        delete this.#delegate_subscriptions[subIdKey];
+    } else {
+      if (this.#subscriptions[subIdKey]) delete this.#subscriptions[subIdKey];
+    }
+
+    const pendingKeys = Object.keys(this.#pending);
+
+    for (let i = 0; i < pendingKeys.length; i++) {
+      const pendingKey = pendingKeys[i];
+      const [pendingSubId, pendingInterval] =
+        parsePendingOrAttemptsKey(pendingKey);
+
+      // Convert `pendingSubId` into a string for equality comparison.
+      const pendingSubIdKey = Array.isArray(pendingSubId)
+        ? makeDelegateSubscriptionsKey(pendingSubId[0], pendingSubId[1])
+        : `${pendingSubId}`;
+
+      if (pendingSubIdKey === subIdKey) {
+        delete this.#pending[pendingKey];
+
+        console.debug('Deleted pending transactions being checked', {
+          id: subscription_id,
+          interval: pendingInterval,
+        });
+      }
+    }
+
+    console.info(`Stopped tracking subscription: ${subscription_id}`, {
+      id: subscription_id,
+    });
+  }
+
+  /**
+   * Checks if a subscription (or delegated subscription) has a pending tx for current interval.
+   */
+  has_subscription_tx_pending_in_interval(subscription_id: UnionID): boolean {
+    let sub;
+
+    // Check whether `subscription_id` is of type `SubscriptionID` (a number).
+    if (typeof subscription_id === 'number') {
+      sub = this.#subscriptions[subscription_id];
+    } else {
+      [sub] =
+        this.#delegate_subscriptions[
+          makeDelegateSubscriptionsKey(subscription_id[0], subscription_id[1])
+        ];
+    }
+
+    const pendingKey = makePendingOrAttemptsKey(subscription_id, sub.interval);
+
+    return !!this.#pending[pendingKey];
+  }
+
+  /**
+   * Serializes container output param as bytes.
+   */
+  #serialize_param(input?: string) {
+    return stringToHex(input ?? '');
+  }
+
+  /**
+   * Serializes container output to conform to on-chain fn input.
+   *
+   * Process:
+   * 1. Check if all 5 keys are present in container output.
+   *    1.1. If so, parse returned output as raw bytes and generate returned data.
+   * 2. Else, serialize data into string and return as output.
+   */
+  #serialize_container_output(containerOutput: ContainerOutput) {
+    const { output } = containerOutput;
+    const outputKeys = Object.keys(output).reduce(
+      (acc, val) => ({
+        ...acc,
+        [val]: true,
+      }),
+      {}
+    );
+    const allKeysExist = RESPONSE_KEYS.every((key) => outputKeys[key]);
+
+    if (allKeysExist) {
+      return [
+        encodeAbiParameters(
+          [
+            {
+              type: 'bytes',
+            },
+            {
+              type: 'bytes',
+            },
+          ],
+          [
+            this.#serialize_param(output['raw_input']),
+            this.#serialize_param(output['processed_input']),
+          ]
+        ),
+        encodeAbiParameters(
+          [
+            {
+              type: 'bytes',
+            },
+            {
+              type: 'bytes',
+            },
+          ],
+          [
+            this.#serialize_param(output['raw_output']),
+            this.#serialize_param(output['processed_output']),
+          ]
+        ),
+        this.#serialize_param(output['proof']),
+      ];
+    }
+
+    return [
+      stringToHex(''),
+      encodeAbiParameters([{ type: 'string' }], [JSON.stringify(output)]),
+      stringToHex(''),
+    ];
   }
 
   setup() {}
