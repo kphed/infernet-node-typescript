@@ -24,11 +24,11 @@ export class WalletChecker {
     rpc: RPC,
     registry: Registry,
     container_configs: InfernetContainer[],
-    payment_address: Address = ZERO_ADDRESS
+    payment_address?: Address
   ) {
     this.#rpc = rpc;
     this.#registry = registry;
-    this.#payment_address = payment_address;
+    this.#payment_address = payment_address ?? ZERO_ADDRESS;
     this.#accepted_payments = container_configs.reduce(
       (acc, { id, accepted_payments }) => {
         return {
@@ -83,5 +83,74 @@ export class WalletChecker {
     }
 
     return [balance >= amount, balance];
+  }
+
+  /**
+   * Check if a subscription matches payment requirements.
+   * 1. Ensure that payment address is provided.
+   * 2. Check that the subscription matches the payment requirements.
+   */
+  matches_payment_requirements(sub: Subscription): boolean {
+    const skipBanner = `Skipping subscription: ${sub.id}`;
+
+    if (this.#payment_address === ZERO_ADDRESS && sub.provides_payment()) {
+      console.info(`${skipBanner}: No payment address provided for the node`, {
+        sub_id: sub.id,
+      });
+
+      return false;
+    }
+
+    const containers = sub.containers();
+
+    for (let i = 0; i < containers.length; i++) {
+      const container = containers[i];
+      const accepted_payments = this.#accepted_payments[container];
+
+      // No payment requirements for this container, it allows everything.
+      if (!accepted_payments) continue;
+
+      if (accepted_payments[sub.payment_token] === undefined) {
+        console.info(
+          `${skipBanner}: Token ${sub.payment_token} not 
+          accepted for container ${container}.`,
+          {
+            sub_id: sub.id,
+            token: sub.payment_token,
+            container,
+            accepted_tokens: Object.keys(accepted_payments),
+          }
+        );
+
+        // Doesn't match, but requires payment.
+        return false;
+      }
+    }
+
+    // Minimum required payment for the subscription is the sum of the payment
+    // requirements of each container.
+    const minPayment = containers.reduce((acc, container) => {
+      const paymentAmount =
+        this.#accepted_payments[container]?.[sub.payment_token] ?? 0;
+
+      return acc + paymentAmount;
+    }, 0);
+
+    if (sub.payment_amount < minPayment) {
+      console.info(
+        `${skipBanner}: Token ${sub.payment_token} below 
+        minimum payment requirements.`,
+        {
+          sub_id: sub.id,
+          token: sub.payment_token,
+          sub_amount: sub.payment_amount,
+          min_amount: minPayment,
+        }
+      );
+
+      return false;
+    }
+
+    return true;
   }
 }
