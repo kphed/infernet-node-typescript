@@ -50,8 +50,6 @@ interface CoordinatorTxParams {
   gas_limit: number;
 }
 
-type TopicType = Hex;
-
 export class Coordinator {
   #rpc: RPC;
   #lookup: ContainerLookup;

@@ -71,7 +71,7 @@ const node_not_allowed_error =
   'Node is not allowed to deliver this subscription.';
 const insufficient_balance_error = 'Insufficient balance.';
 
-class InfernetError extends Error {}
+export class InfernetError extends Error {}
 
 /**
  * Checks if the error belongs to the infernet contracts based on its 4-byte signature,

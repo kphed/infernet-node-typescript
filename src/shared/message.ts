@@ -3,7 +3,7 @@ import { CoordinatorSignatureParams } from '../chain/coordinator';
 import { SerializedSubscription, Subscription } from './subscription';
 
 // Message types.
-enum MessageType {
+export enum MessageType {
   OffchainJob = 0,
   DelegatedSubscription = 1,
   SubscriptionCreated = 2,
@@ -24,7 +24,7 @@ export interface OffchainJobMessage extends BaseMessage {
 }
 
 // Off-chain originating, on-chain delivery message.
-interface DelegatedSubscriptionMessage extends BaseMessage {
+export interface DelegatedSubscriptionMessage extends BaseMessage {
   subscription: SerializedSubscription;
   signature: CoordinatorSignatureParams;
   data: {
@@ -35,7 +35,7 @@ interface DelegatedSubscriptionMessage extends BaseMessage {
 }
 
 // On-chain subscription creation event.
-interface SubscriptionCreatedMessage {
+export interface SubscriptionCreatedMessage {
   subscription: Subscription;
   type: MessageType.SubscriptionCreated;
   requires_proof?: boolean;
@@ -45,18 +45,18 @@ interface SubscriptionCreatedMessage {
 export type OffchainMessage = OffchainJobMessage | DelegatedSubscriptionMessage;
 
 // Type alias for coordinator event messages.
-type CoordinatorMessage = SubscriptionCreatedMessage;
+export type CoordinatorMessage = SubscriptionCreatedMessage;
 
 // Type alias for filtered event message.
-type FilteredMessage = OffchainMessage | CoordinatorMessage;
+export type FilteredMessage = OffchainMessage | CoordinatorMessage;
 
 // Type alias for pre-filtered event messages.
-type PrefilterMessage = OffchainMessage | CoordinatorMessage;
+export type PrefilterMessage = OffchainMessage | CoordinatorMessage;
 
 // Type alias for on-chain processed messages.
-type OnchainMessage = CoordinatorMessage | DelegatedSubscriptionMessage;
+export type OnchainMessage = CoordinatorMessage | DelegatedSubscriptionMessage;
 
-interface GuardianError {
+export interface GuardianError {
   message: PrefilterMessage;
   error: string;
   params: {
