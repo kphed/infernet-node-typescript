@@ -633,6 +633,145 @@ class ChainProcessor extends AsyncTask {
     return false;
   }
 
+  /**
+   * Check if the subscription has exceeded the maximum number of attempts. If so,
+   * stop tracking it.
+   */
+  async #stop_tracking_if_maximum_retries_reached(
+    sub_key: [UnionID, Interval],
+    delegated: boolean
+  ): Promise<boolean> {
+    const key = makePendingOrAttemptsKey(sub_key[0], sub_key[1]);
+
+    if (this.#attempts[key]) {
+      const attemptCount = this.#attempts[key];
+
+      if (attemptCount >= 3) {
+        console.error(
+          'Subscription has exceeded the maximum number of attempts',
+          {
+            id: sub_key[0],
+            interval: sub_key[1],
+            tx_hash: this.#pending[key],
+            attempts: attemptCount,
+          }
+        );
+
+        console.info('Clearing attempts', { sub_key });
+
+        delete this.#attempts[key];
+
+        await this.#attempts_lock.runExclusive(async () => {
+          // Delete subcription.
+          this.#stop_tracking(sub_key[0], delegated);
+        });
+
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if the subscription has missed the deadline. If so, stop tracking it.
+   */
+  #stop_tracking_sub_if_missed_deadline(
+    subscription_id: UnionID,
+    delegated: boolean
+  ): boolean {
+    let subscription: Subscription;
+
+    if (!delegated && typeof subscription_id === 'number') {
+      subscription = this.#subscriptions[subscription_id as SubscriptionID];
+    } else {
+      [subscription] =
+        this.#delegate_subscriptions[
+          makeDelegateSubscriptionsKey(subscription_id[0], subscription_id[1])
+        ];
+    }
+
+    // Checking if subscription is falsy is necessary because the subscription may have
+    // been deleted in `#process_subscription`.
+    if (!subscription) return true;
+
+    if (subscription.past_last_interval()) {
+      console.info('Subscription expired', {
+        id: subscription.id,
+        interval: subscription.interval(),
+      });
+
+      this.#stop_tracking(subscription_id, delegated);
+
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * We first attempt a delivery with empty (input, output, proof) to check if there
+   * are any infernet-related errors caught during the transaction simulation. This
+   * allows us to catch a multitude of errors even if we had run the compute. This
+   * prevents the node from wasting resources on a compute that would have failed
+   * on-chain.
+   */
+  async #stop_tracking_if_infernet_errors_caught_in_simulation(
+    subscription: Subscription,
+    delegated: boolean,
+    signature?: CoordinatorSignatureParams
+  ): Promise<boolean> {
+    if (subscription.requires_proof()) return false;
+
+    try {
+      await this.#deliver(subscription, delegated, signature, true);
+    } catch (err) {
+      if (err instanceof InfernetError && subscription.is_callback()) {
+        this.#stop_tracking(subscription.id, delegated);
+
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Deliver the compute to the chain.
+   */
+  async #deliver(
+    subscription: Subscription,
+    delegated: boolean,
+    signature: CoordinatorSignatureParams | undefined,
+    simulate_only: boolean,
+    input: Hex = '0x',
+    output: Hex = '0x',
+    proof: Hex = '0x'
+  ): Promise<Hex> {
+    let txHash;
+
+    if (delegated && signature) {
+      txHash = await this.#wallet.deliver_compute_delegatee(
+        subscription,
+        signature,
+        input,
+        output,
+        proof,
+        simulate_only
+      );
+    } else {
+      txHash = await this.#wallet.deliver_compute(
+        subscription,
+        input,
+        output,
+        proof,
+        simulate_only
+      );
+    }
+
+    return txHash;
+  }
+
   setup() {}
 
   cleanup() {}
