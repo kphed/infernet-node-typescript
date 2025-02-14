@@ -251,7 +251,7 @@ export class Coordinator {
    */
   async get_subscription_by_id(
     subscription_id: number,
-    block_number: BlockNumber
+    block_number?: BlockNumber
   ): Promise<Subscription> {
     const [
       owner,
@@ -265,9 +265,15 @@ export class Coordinator {
       payment_amount,
       payment_token,
       wallet,
-    ] = (await this.#contract.read.getSubscription([subscription_id], {
-      blockNumber: block_number,
-    })) as [
+    ] = (await this.#contract.read.getSubscription(
+      [subscription_id],
+      // If `block_number === undefined` will use the latest block number by default.
+      block_number
+        ? {
+            blockNumber: block_number,
+          }
+        : {}
+    )) as [
       Address,
       number,
       number,

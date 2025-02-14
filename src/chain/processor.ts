@@ -481,6 +481,158 @@ class ChainProcessor extends AsyncTask {
     ];
   }
 
+  /**
+   * Check if the subscription owner can pay for the subscription. If not, stop
+   * tracking the subscription. Checks for:
+   * 1. Invalid wallet.
+   * 2. Insufficient balance.
+   */
+  async #stop_tracking_if_sub_owner_cant_pay(
+    sub_id: SubscriptionID
+  ): Promise<boolean> {
+    const sub = this.#subscriptions[sub_id];
+
+    if (!sub) return true;
+    if (!sub.provides_payment) return false;
+
+    const banner = `Skipping subscription: ${sub_id}`;
+
+    if (!(await this.#wallet_checker.is_valid_wallet(sub.wallet))) {
+      console.info(
+        `
+        ${banner}: Invalid subscription wallet, please use a wallet generated
+        by infernet's \`WalletFactory\``,
+        {
+          sub_id: sub.id,
+          wallet: sub.wallet,
+        }
+      );
+
+      this.#stop_tracking(sub.id, false);
+
+      return true;
+    }
+
+    const [hasBalance, balance] = await this.#wallet_checker.has_enough_balance(
+      sub.wallet,
+      sub.payment_token,
+      sub.payment_amount
+    );
+
+    if (!hasBalance) {
+      console.info(`${banner}: Subscription wallet has insufficient balance`, {
+        sub_id: sub.id,
+        wallet: sub.wallet,
+        sub_amount: sub.payment_amount,
+        wallet_balance: balance,
+      });
+
+      this.#stop_tracking(sub.id, false);
+
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if the subscription has been cancelled on-chain, if so, stop tracking it.
+   */
+  async #stop_tracking_if_cancelled(sub_id: SubscriptionID): Promise<boolean> {
+    const sub: Subscription = await this.#coordinator.get_subscription_by_id(
+      sub_id
+    );
+
+    if (sub.cancelled()) {
+      console.info('Subscription cancelled', { id: sub_id });
+
+      this.#stop_tracking(sub.id, false);
+
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if the delegated subscription has already been completed. If so, stop
+   * tracking it.
+   *
+   * Note that delegated subscriptions may not have a subscription id yet generated,
+   * since we allow for delegated subscriptions to be created & fulfilled in the same
+   * transaction. In such cases, we use the owner-nonce pair as the subscription id.
+   *
+   * For delegated subscriptions, we only check if the transaction has already been
+   * submitted and was successful.
+   * 1. For one-off delegated subscriptions (where redundancy=1 & frequency =1),
+   * this is sufficient.
+   * 2. For recurring delegated subscriptions (redundancy>1 or frequency>1),
+   * the same subscription will get tracked again as it will show up on-chain
+   * & will get picked up by the listener. Past that point, the tracking of that
+   * subscription will be handled by the regular subscription tracking logic.
+   */
+  async #stop_tracking_delegated_sub_if_completed(
+    sub_id: DelegateSubscriptionID
+  ): Promise<boolean> {
+    const [sub]: DelegateSubscriptionData =
+      this.#delegate_subscriptions[
+        makeDelegateSubscriptionsKey(sub_id[0], sub_id[1])
+      ];
+    const txHash =
+      this.#pending[makePendingOrAttemptsKey(sub_id, sub.interval())];
+
+    // We have not yet submitted the transaction for this delegated subscription.
+    if (!txHash || txHash === BLOCKED) return false;
+
+    const [found, success] = await this.#rpc.get_tx_success_with_retries(
+      txHash
+    );
+
+    // We have already submitted the transaction and it was successful.
+    if (found && success) {
+      console.info('Delegated subscription completed for interval', {
+        id: sub_id,
+        interval: sub.interval(),
+      });
+
+      this.#stop_tracking(sub_id, true);
+
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if the subscription has already been completed. If so, stop tracking it.
+   *
+   * This updates the response count for the subscription by reading it from on-chain
+   * storage. If the subscription has already been completed, it stops tracking it.
+   */
+  async #stop_tracking_sub_if_completed(
+    subscription: Subscription
+  ): Promise<boolean> {
+    const { id } = subscription;
+    const interval = subscription.interval();
+    const responseCount =
+      await this.#coordinator.get_subscription_response_count(id, interval);
+
+    subscription.set_response_count(interval, responseCount);
+
+    if (subscription.completed()) {
+      console.info('Subscription already completed', {
+        id,
+        interval,
+      });
+
+      this.#stop_tracking(id, false);
+
+      return true;
+    }
+
+    return false;
+  }
+
   setup() {}
 
   cleanup() {}
