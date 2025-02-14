@@ -1,5 +1,12 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/2632a0b43b54216fb9616ff0c925edfdf48d7004/src/chain/processor.py.
-import { encodeAbiParameters, Hex, stringToHex } from 'viem';
+import {
+  encodeAbiParameters,
+  Hex,
+  stringToHex,
+  ContractFunctionRevertedError,
+  ContractFunctionExecutionError,
+  BaseError,
+} from 'viem';
 import { Mutex } from 'async-mutex';
 import { Coordinator, CoordinatorSignatureParams } from './coordinator';
 import { InfernetError } from './errors';
@@ -24,7 +31,7 @@ import {
 import { AsyncTask } from '../shared/service';
 import { Subscription } from '../shared/subscription';
 import { ContainerLookup } from './containerLookup';
-import { cloneDeepJSON } from '../utils/helpers';
+import { cloneDeepJSON, getUnixTimestamp } from '../utils/helpers';
 
 const BLOCKED: Hex = '0xblocked';
 
@@ -429,7 +436,9 @@ class ChainProcessor extends AsyncTask {
    *    1.1. If so, parse returned output as raw bytes and generate returned data.
    * 2. Else, serialize data into string and return as output.
    */
-  #serialize_container_output(containerOutput: ContainerOutput) {
+  #serialize_container_output(
+    containerOutput: ContainerOutput
+  ): [Hex, Hex, Hex] {
     const { output } = containerOutput;
     const outputKeys = Object.keys(output).reduce(
       (acc, val) => ({
@@ -770,6 +779,231 @@ class ChainProcessor extends AsyncTask {
     }
 
     return txHash;
+  }
+
+  /**
+   * Execute containers for the subscription.
+   */
+  async #execute_on_containers(
+    subscription: Subscription,
+    delegated: boolean,
+    delegated_params?: [
+      CoordinatorSignatureParams,
+      {
+        [key: string]: any;
+      }
+    ]
+  ): Promise<(ContainerError | ContainerOutput)[]> {
+    let containerInput: JobInput;
+
+    if (delegated && delegated_params) {
+      containerInput = {
+        source: JobLocation.OFFCHAIN,
+        destination: JobLocation.ONCHAIN,
+        data: delegated_params[1],
+      };
+    } else {
+      const chainInput: Hex = await this.#coordinator.get_container_inputs(
+        subscription,
+        subscription.interval(),
+        getUnixTimestamp(),
+        this.#wallet.address
+      );
+
+      containerInput = {
+        source: JobLocation.ONCHAIN,
+        destination: JobLocation.ONCHAIN,
+        data: chainInput,
+      };
+    }
+
+    console.debug('Setup container input', {
+      id: subscription.id,
+      interval: subscription.interval(),
+      input: containerInput,
+    });
+
+    return this.#orchestrator.process_chain_processor_job(
+      subscription.id,
+      containerInput,
+      subscription.containers(),
+      subscription.requires_proof()
+    );
+  }
+
+  async #escrow_reward_in_wallet(subscription: Subscription): Promise<void> {
+    console.info('Escrowing reward in wallet', {
+      id: subscription.id,
+      token: subscription.payment_token,
+      amount: subscription.payment_amount,
+      spender: this.#registry.coordinator(),
+    });
+
+    await this.#payment_wallet.approve(
+      this.#rpc.account(),
+      subscription.payment_token,
+      BigInt(subscription.payment_amount)
+    );
+  }
+
+  /**
+   * Processes subscription (collects inputs, runs containers, posts output
+   * on-chain).
+   *
+   * Process:
+   * 1. Toggle pending execution for interval by blocking this.#pending.
+   * 2. Collect latest input parameters, if needed, from chain.
+   * 3. Execute relevant containers via orchestrator.
+   * 4. Serialize container response.
+   * 5. Send deliver_compute (or delivate_compute_delegatee if delegated
+   * subscription) tx via wallet.
+   * 6. Update self._pending with accurate tx hash.
+   */
+  async #process_subscription(
+    id: UnionID,
+    subscription: Subscription,
+    delegated: boolean,
+    delegated_params?: [
+      CoordinatorSignatureParams,
+      {
+        [key: string]: any;
+      }
+    ]
+  ): Promise<void> {
+    const interval = subscription.interval();
+
+    console.info('Processing subscription', {
+      id,
+      interval,
+      delegated,
+    });
+
+    // Check if we missed the subscription deadline.
+    if (await this.#stop_tracking_sub_if_missed_deadline(id, delegated)) return;
+
+    const pendingKey = makePendingOrAttemptsKey(id, interval);
+    this.#pending[pendingKey] = BLOCKED;
+
+    if (
+      await this.#stop_tracking_if_infernet_errors_caught_in_simulation(
+        subscription,
+        delegated,
+        delegated_params ? delegated_params[0] : undefined
+      )
+    )
+      return;
+
+    const containerResults = await this.#execute_on_containers(
+      subscription,
+      delegated,
+      delegated_params
+    );
+
+    // Check if some container response received. If none, prevent blocking pending queue and return.
+    if (!containerResults.length) {
+      console.error('Container results empty', { id, interval });
+
+      delete this.#pending[pendingKey];
+
+      return;
+    }
+
+    const lastResult = containerResults.pop() as
+      | ContainerError
+      | ContainerOutput;
+    const subscriptionIsCallback = subscription.is_callback();
+
+    // Check for container error. If error, prevent blocking pending queue and return.
+    if ('error' in lastResult) {
+      console.error('Container execution errored', {
+        id,
+        interval,
+        err: lastResult,
+      });
+
+      delete this.#pending[pendingKey];
+
+      if (subscriptionIsCallback)
+        this.#stop_tracking(subscription.id, delegated);
+
+      return;
+    } else if (lastResult.output.code && lastResult.output.code !== '200') {
+      console.error('Container execution errored', {
+        id,
+        interval,
+        err: lastResult,
+      });
+
+      delete this.#pending[pendingKey];
+
+      if (subscriptionIsCallback)
+        this.#stop_tracking(subscription.id, delegated);
+
+      return;
+    } else {
+      console.info('Container execution succeeded', { id, interval });
+      console.debug('Container output', { last_result: lastResult });
+    }
+
+    if (subscription.requires_proof())
+      await this.#escrow_reward_in_wallet(subscription);
+
+    const [input, output, proof] = this.#serialize_container_output(lastResult);
+
+    let txHash;
+
+    try {
+      txHash = await this.#deliver(
+        subscription,
+        delegated,
+        delegated && delegated_params ? delegated_params[0] : undefined,
+        false,
+        input,
+        output,
+        proof
+      );
+    } catch (err: any) {
+      let revertError;
+
+      if (err instanceof BaseError)
+        revertError = err.walk(
+          (err) =>
+            err instanceof ContractFunctionRevertedError ||
+            err instanceof ContractFunctionExecutionError
+        );
+
+      // Transaction simulation failed. If it's a callback subscription, we can stop tracking it
+      // delegated subscriptions will expire instead.
+      if (err instanceof InfernetError || revertError) {
+        if (subscriptionIsCallback)
+          this.#stop_tracking(subscription.id, delegated);
+
+        console.info('Did not send tx', {
+          subscription,
+          id,
+          interval,
+          delegated,
+        });
+
+        return;
+      } else {
+        console.error(`Failed to send tx ${err}`, {
+          subscription,
+          id,
+          interval,
+          delegated,
+        });
+
+        if (subscriptionIsCallback)
+          this.#stop_tracking(subscription.id, delegated);
+
+        return;
+      }
+    }
+
+    this.#pending[pendingKey] = txHash;
+
+    console.info('Sent tx', { id, interval, delegated, tx_hash: txHash });
   }
 
   setup() {}
