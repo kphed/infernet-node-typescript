@@ -115,7 +115,7 @@ export class Orchestrator {
 
         const output = await response.json();
 
-        results.push({ container, output });
+        results.push({ container, output } as ContainerOutput);
 
         this.#store.track_container_status(container, 'success');
 
@@ -146,7 +146,7 @@ export class Orchestrator {
           containerError.error = err.message || String(err);
         }
 
-        results.push(containerError);
+        results.push(containerError as ContainerError);
 
         console.error('Container error', {
           id: job_id,
@@ -254,7 +254,7 @@ export class Orchestrator {
         {
           container,
           output: JSON.parse(output),
-        },
+        } as ContainerOutput,
       ]);
 
       this.#store.track_container_status(container, 'success');
@@ -271,7 +271,7 @@ export class Orchestrator {
         {
           container,
           error,
-        },
+        } as ContainerError,
       ]);
 
       this.#store.track_container_status(container, 'failed');
