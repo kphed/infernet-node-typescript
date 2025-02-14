@@ -2,14 +2,13 @@
 import { Address, Hex, getAddress, hashTypedData } from 'viem';
 import { ContainerLookup } from '../chain/containerLookup';
 import { UINT32_MAX, ZERO_ADDRESS } from '../utils/constants';
+import { getUnixTimestamp } from '../utils/helpers';
 
 const add0x = (hash: string): `0x${string}` => {
   if (hash.substring(0, 2) === '0x') return hash as `0x${string}`;
 
   return `0x${hash}`;
 };
-
-const getUnixTimestamp = (): number => Math.floor(new Date().getTime() / 1_000);
 
 export class Subscription {
   id: number;

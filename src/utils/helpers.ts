@@ -42,3 +42,6 @@ export const permutations = <T>(
  * NOTE: Properties with function-type values will be omitted.
  */
 export const cloneDeepJSON = (obj: any) => JSON.parse(JSON.stringify(obj));
+
+export const getUnixTimestamp = (): number =>
+  Math.floor(new Date().getTime() / 1_000);
