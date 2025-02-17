@@ -25,13 +25,11 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { delay } from '../utils/helpers';
 
 export class RPC {
-  #rpc_url: string;
   #private_key: Hex;
   publicClient: PublicClient;
   web3: WalletClient;
 
   constructor(rpc_url: string, private_key: Hex) {
-    this.#rpc_url = rpc_url;
     this.#private_key = private_key;
     this.publicClient = createPublicClient({
       transport: http(rpc_url),

@@ -1,12 +1,11 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/chain/container_lookup.py.
-import { keccak256, encodeAbiParameters } from 'viem';
+import { keccak256, encodeAbiParameters, Hex } from 'viem';
 import { permutations } from '../utils/helpers';
 import { InfernetContainer } from '../shared/config';
 
 /**
  * Get all possible permutations of comma-separated container IDs. It performs this on
- * the power set of the containers List, which includes all possible combinations of
- * containers, including the empty set.
+ * the containers array, which includes all possible combinations of containers.
  */
 export const getAllCommaSeparatedPermutations = (
   containers: string[]
@@ -42,20 +41,21 @@ export class ContainerLookup {
    * table of all possible container sets on the node side to find out which
    * containers are required for a given subscription.
    */
-  #init_container_lookup(configs: InfernetContainer[]) {
+  #init_container_lookup(configs: InfernetContainer[]): void {
     const allPermutations = getAllCommaSeparatedPermutations(
       configs.map(({ id }) => id)
     );
-    const calculateHash = (permutation: string): string =>
+    const calculateHash = (permutation: string): Hex =>
       keccak256(encodeAbiParameters([{ type: 'string' }], [permutation]));
 
     // Compute hashes for each of the container ID permutations.
-    this.#container_lookup = allPermutations.reduce((acc, val) => {
-      return {
+    this.#container_lookup = allPermutations.reduce(
+      (acc, val) => ({
         ...acc,
         [calculateHash(val)]: val.split(','),
-      };
-    }, {});
+      }),
+      {}
+    );
 
     console.log(
       `Initialized container lookup: ${JSON.stringify(this.#container_lookup)}`
@@ -63,8 +63,7 @@ export class ContainerLookup {
   }
 
   /**
-   * Get the container IDs from a keccak hash. Returns an empty List if the hash is
-   * not found.
+   * Get the container IDs from a keccak hash. Returns an empty array if the hash is not found.
    */
   get_containers(hash: string): string[] {
     return this.#container_lookup[hash] ?? [];
