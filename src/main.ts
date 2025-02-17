@@ -6,16 +6,16 @@ dotenv.config();
 import { Config, loadValidatedConfig, ConfigWallet } from './shared/config';
 import { checkNodeIsUpToDate } from './version';
 import { assignPorts } from './utils/container';
-import { ContainerManager } from './orchestration/docker';
-import { DataStore } from './orchestration/store';
-import { Orchestrator } from './orchestration/orchestrator';
-import { ContainerLookup } from './chain/containerLookup';
-import { ChainProcessor } from './chain/processor';
-import { Wallet } from './chain/wallet';
-import { RPC } from './chain/rpc';
-import { Registry } from './chain/registry';
 import { add0x } from './utils/helpers';
-import { WalletChecker } from './chain/walletChecker';
+import { ContainerManager, DataStore, Orchestrator } from './orchestration';
+import {
+  ContainerLookup,
+  ChainProcessor,
+  Wallet,
+  RPC,
+  Registry,
+  WalletChecker,
+} from './chain';
 
 const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
 
