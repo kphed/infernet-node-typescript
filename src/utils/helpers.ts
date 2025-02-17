@@ -36,12 +36,5 @@ export const permutations = <T>(
   return results;
 };
 
-/**
- * Creates a new object or array from the input.
- *
- * NOTE: Properties with function-type values will be omitted.
- */
-export const cloneDeepJSON = (obj: any) => JSON.parse(JSON.stringify(obj));
-
 export const getUnixTimestamp = (): number =>
   Math.floor(new Date().getTime() / 1_000);
