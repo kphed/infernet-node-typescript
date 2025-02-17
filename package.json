@@ -29,6 +29,7 @@
     "async-mutex": "^0.5.0",
     "dockerode": "^4.0.4",
     "dotenv": "^16.4.7",
+    "ipaddr.js": "^2.2.0",
     "lodash": "^4.17.21",
     "redis": "^4.7.0",
     "viem": "^2.22.21"
