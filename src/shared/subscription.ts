@@ -18,8 +18,8 @@ export class Subscription {
   owner: Address;
   containers_hash: `0x${string}`;
   wallet: Address;
+  active_at: number;
   #container_lookup: ContainerLookup;
-  #active_at: number;
   #period: number;
   #frequency: number;
   #redundancy: number;
@@ -53,8 +53,8 @@ export class Subscription {
     this.owner = getAddress(owner);
     this.containers_hash = add0x(containers_hash);
     this.wallet = getAddress(wallet);
+    this.active_at = active_at;
     this.#container_lookup = container_lookup;
-    this.#active_at = active_at;
     this.#period = period;
     this.#frequency = frequency;
     this.#redundancy = redundancy;
@@ -67,14 +67,14 @@ export class Subscription {
    * Returns whether a subscription is active.
    */
   active(): boolean {
-    return getUnixTimestamp() > this.#active_at;
+    return getUnixTimestamp() > this.active_at;
   }
 
   /**
    * Returns whether a subscription is cancelled.
    */
   cancelled(): boolean {
-    return this.#active_at === UINT32_MAX;
+    return this.active_at === UINT32_MAX;
   }
 
   /**
@@ -104,9 +104,7 @@ export class Subscription {
     // If period is 0, we're always at interval 1.
     if (!this.#period) return 1;
 
-    return (
-      Math.floor((getUnixTimestamp() - this.#active_at) / this.#period) + 1
-    );
+    return Math.floor((getUnixTimestamp() - this.active_at) / this.#period) + 1;
   }
 
   /**
@@ -242,7 +240,7 @@ export class Subscription {
         expiry,
         sub: {
           owner: this.owner,
-          activeAt: this.#active_at,
+          activeAt: this.active_at,
           period: this.#period,
           frequency: this.#frequency,
           redundancy: this.#redundancy,
@@ -275,7 +273,7 @@ export class Subscription {
   ] {
     return [
       this.owner,
-      this.#active_at,
+      this.active_at,
       this.#period,
       this.#frequency,
       this.#redundancy,
