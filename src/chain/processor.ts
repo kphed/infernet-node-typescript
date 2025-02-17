@@ -8,6 +8,7 @@ import {
   BaseError,
 } from 'viem';
 import { Mutex } from 'async-mutex';
+import { cloneDeep } from 'lodash';
 import { Coordinator, CoordinatorSignatureParams } from './coordinator';
 import { InfernetError } from './errors';
 import { PaymentWallet } from './paymentWallet';
@@ -31,7 +32,7 @@ import {
 import { AsyncTask } from '../shared/service';
 import { Subscription } from '../shared/subscription';
 import { ContainerLookup } from './containerLookup';
-import { cloneDeepJSON, getUnixTimestamp } from '../utils/helpers';
+import { getUnixTimestamp, delay } from '../utils/helpers';
 
 const BLOCKED: Hex = '0xblocked';
 
@@ -84,7 +85,7 @@ const parsePendingOrAttemptsKey = (key: string): [UnionID, Interval] => {
   throw new Error(`Invalid key: ${key}`);
 };
 
-class ChainProcessor extends AsyncTask {
+export class ChainProcessor extends AsyncTask {
   #rpc: RPC;
   #coordinator: Coordinator;
   #wallet: Wallet;
@@ -307,7 +308,7 @@ class ChainProcessor extends AsyncTask {
     const failedTxs: string[] = [];
 
     await this.#attempts_lock.runExclusive(async () => {
-      const pendingCopy = cloneDeepJSON(this.#pending);
+      const pendingCopy = cloneDeep(this.#pending);
       const pendingCopyKeys = Object.keys(pendingCopy);
 
       for (let i = 0; i < pendingCopyKeys.length; i++) {
@@ -403,7 +404,7 @@ class ChainProcessor extends AsyncTask {
   /**
    * Checks if a subscription (or delegated subscription) has a pending tx for current interval.
    */
-  has_subscription_tx_pending_in_interval(subscription_id: UnionID): boolean {
+  #has_subscription_tx_pending_in_interval(subscription_id: UnionID): boolean {
     let sub;
 
     // Check whether `subscription_id` is of type `SubscriptionID` (a number).
@@ -1006,11 +1007,167 @@ class ChainProcessor extends AsyncTask {
     console.info('Sent tx', { id, interval, delegated, tx_hash: txHash });
   }
 
+  /**
+   * Tracks incoming message by type.
+   */
+  async track(msg: OnchainMessage): Promise<void> {
+    switch (msg.type) {
+      case MessageType.SubscriptionCreated:
+        this.#track_created_message(msg);
+
+        break;
+      case MessageType.DelegatedSubscription:
+        await this.#track_delegated_message(
+          msg as DelegatedSubscriptionMessage
+        );
+
+        break;
+      default:
+        console.error('Unknown message type to track', { message: msg });
+    }
+  }
+
+  /**
+   * Core ChainProcessor event loop.
+   *
+   * Process:
+   * 1. Every 100ms (note: not most efficient implementation, should just
+   * trigger as needed):
+   *    For each subscription:
+   *        1.1. Prune pending txs that have failed.
+   *        1.2 If the node requires payment, check if the subscription has a
+   *            valid wallet and enough funds.
+   *        1.3 Check subscriptions that have been cancelled, and stop tracking.
+   *        1.4 Skip the inactive subscriptions.
+   *        1.5 Check if the subscription has already been completed, and stop
+   *            tracking.
+   *        1.6 Check if the subscription has passed the deadline, and stop
+   *            tracking.
+   *        1.7 Check if the subscription's transaction failure has exceeded the
+   *            maximum number of attempts, and if so, stop tracking.
+   *        1.8 Filter out ones where node has already submitted on-chain tx
+   *            for current interval, or has a pending tx submitted.
+   *        1.9 If all above checks pass, queue for processing.
+   *    For each delegated subscription:
+   *        1.1 Skip the inactive subscriptions.
+   *        1.2 Check if the delegated subscription has already been completed,
+   *            and stop tracking.
+   *        1.3 Check if the delegated subscription's transaction failure has
+   *            exceeded the maximum number of attempts, and if so, stop tracking.
+   *        1.4 Filter out ones where node has a pending tx submitted.
+   *        1.5 Queue for processing.
+   */
+  async run_forever(): Promise<void> {
+    while (!this.shutdown) {
+      this.#prune_failed_txs();
+
+      const subscriptionsCopy: {
+        [key: string]: Subscription;
+      } = cloneDeep(this.#subscriptions);
+
+      for (const subId in subscriptionsCopy) {
+        const subscriptionId = parseInt(subId);
+        const subscription: Subscription = subscriptionsCopy[subId];
+
+        // Checks if sub owner has a valid wallet & enough funds.
+        if (await this.#stop_tracking_if_sub_owner_cant_pay(subscriptionId))
+          continue;
+
+        // Since cancellation means `Subscription.active_at === UINT32_MAX`, we should
+        // check if the subscription is cancelled before checking activation.
+        if (await this.#stop_tracking_if_cancelled(subscriptionId)) continue;
+
+        // Skips if subscription is not active.
+        if (!subscription.active()) {
+          console.info('Ignored inactive subscription', {
+            id: subId,
+            diff: subscription.active_at - getUnixTimestamp(),
+          });
+
+          continue;
+        }
+
+        if (await this.#stop_tracking_sub_if_completed(subscription)) continue;
+        if (this.#stop_tracking_sub_if_missed_deadline(subscriptionId, false))
+          continue;
+        if (
+          await this.#stop_tracking_if_maximum_retries_reached(
+            [subscriptionId, subscription.interval()],
+            false
+          )
+        )
+          continue;
+
+        // Check if subscription needs processing.
+        // 1. Response for current interval must not be in pending queue.
+        // 2. Response for current interval must not have already been confirmed on-chain.
+        if (
+          !this.#has_subscription_tx_pending_in_interval(subscriptionId) &&
+          !(await this.#has_responded_onchain_in_interval(subscriptionId))
+        ) {
+          this.#process_subscription(subscriptionId, subscription, false);
+        }
+      }
+
+      // Make deep copy to avoid mutation during iteration.
+      const delegateSubscriptionsCopy: {
+        [key: string]: DelegateSubscriptionData;
+      } = cloneDeep(this.#delegate_subscriptions);
+
+      for (const delegateSubscriptionId in delegateSubscriptionsCopy) {
+        const parsedDelegateSubscriptionId = delegateSubscriptionId.split('-');
+        const [subOwner, sigNonce]: DelegateSubscriptionID = [
+          parsedDelegateSubscriptionId[0] as Hex,
+          parseInt(parsedDelegateSubscriptionId[1]),
+        ];
+        const subscription: Subscription =
+          delegateSubscriptionsCopy[delegateSubscriptionId][0];
+
+        if (!subscription.active()) {
+          console.debug('Ignored inactive subscription', {
+            id: delegateSubscriptionId,
+            diff: subscription.active_at - getUnixTimestamp(),
+          });
+
+          continue;
+        }
+
+        if (
+          await this.#stop_tracking_delegated_sub_if_completed([
+            subOwner,
+            sigNonce,
+          ])
+        )
+          continue;
+
+        if (
+          await this.#stop_tracking_if_maximum_retries_reached(
+            [[subOwner, sigNonce], subscription.interval()],
+            true
+          )
+        )
+          continue;
+
+        // Check if subscription needs processing
+        // 1. Response for current interval must not be in pending queue
+        // Unlike subscriptions, delegate subscriptions cannot have already
+        // confirmed on-chain txs, since those would be tracked by their
+        // on-chain ID and not as a delegate subscription
+        if (
+          !this.#has_subscription_tx_pending_in_interval([subOwner, sigNonce])
+        ) {
+          this.#process_subscription([subOwner, sigNonce], subscription, true, [
+            delegateSubscriptionsCopy[delegateSubscriptionId][1],
+            delegateSubscriptionsCopy[delegateSubscriptionId][2],
+          ]);
+        }
+      }
+
+      await delay(100);
+    }
+  }
+
   setup() {}
 
   cleanup() {}
-
-  track() {}
-
-  run_forever() {}
 }
