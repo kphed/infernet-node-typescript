@@ -7,7 +7,12 @@ import { Config, loadValidatedConfig, ConfigWallet } from './shared/config';
 import { checkNodeIsUpToDate } from './version';
 import { assignPorts } from './utils/container';
 import { add0x } from './utils/helpers';
-import { ContainerManager, DataStore, Orchestrator } from './orchestration';
+import {
+  ContainerManager,
+  DataStore,
+  Orchestrator,
+  Guardian,
+} from './orchestration';
 import {
   ContainerLookup,
   ChainProcessor,
@@ -15,6 +20,9 @@ import {
   RPC,
   Registry,
   WalletChecker,
+  Coordinator,
+  Reader,
+  PaymentWallet,
 } from './chain';
 
 const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
@@ -69,6 +77,40 @@ const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
         registry,
         config.containers,
         paymentAddress
+      );
+      const guardian = new Guardian(
+        config.containers,
+        chainEnabled,
+        containerLookup,
+        walletChecker
+      );
+
+      await registry.populate_addresses();
+
+      const coordinator = new Coordinator(
+        rpc,
+        registry.coordinator(),
+        containerLookup
+      );
+      const reader = new Reader(rpc, registry.reader(), containerLookup);
+      const wallet = new Wallet(
+        rpc,
+        coordinator,
+        privateKey,
+        BigInt(walletConfig.max_gas_limit),
+        paymentAddress,
+        walletConfig.allowed_sim_errors
+      );
+      const paymentWallet = new PaymentWallet(paymentAddress, rpc);
+      const processor = new ChainProcessor(
+        rpc,
+        coordinator,
+        wallet,
+        paymentWallet,
+        walletChecker,
+        registry,
+        orchestrator,
+        containerLookup
       );
     }
   } catch (err) {
