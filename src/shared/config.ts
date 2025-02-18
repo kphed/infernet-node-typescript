@@ -1,141 +1,146 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/073594fc5edafc9e78b8286b943565bd6d5b25c5/src/shared/config.py.
 import fs from 'fs';
+import { z } from 'zod';
+import { isAddress } from 'viem';
 
-export class ConfigRateLimit {
-  constructor(public num_requests: number = 60, public period: number = 60) {}
-}
+const OptionalStringSchema = z.string().optional();
 
-export class ConfigServer {
-  constructor(
-    public port: number = 4000,
-    public rate_limit: ConfigRateLimit = new ConfigRateLimit()
-  ) {}
-}
+const AddressSchema = z
+  .string()
+  .length(42)
+  .refine((address: string) => isAddress(address, { strict: false }));
 
-export class ConfigWallet {
-  constructor(
-    public max_gas_limit: number = 5_000_000,
-    public private_key?: string,
-    public payment_address?: string,
-    public allowed_sim_errors: string[] = []
-  ) {}
-}
+const ConfigRateLimitSchema = z.object({
+  num_requests: z.number().default(60),
+  period: z.number().default(60),
+});
 
-export class ConfigSnapshotSync {
-  constructor(
-    public sleep: number = 1,
-    public batch_size: number = 500,
-    public starting_sub_id: number = 0,
-    public sync_period: number = 0.5
-  ) {}
-}
+const ConfigServerSchema = z.object({
+  port: z.number().default(4000),
+  rate_limit: ConfigRateLimitSchema.default(ConfigRateLimitSchema.parse({})),
+});
 
-export class ConfigChain {
-  constructor(
-    public enabled: boolean = false,
-    public rpc_url?: string,
-    public trail_head_blocks: number = 1,
-    public registry_address?: string,
-    public wallet?: ConfigWallet,
-    public snapshot_sync: ConfigSnapshotSync = new ConfigSnapshotSync()
-  ) {}
-}
+const ConfigWalletSchema = z.object({
+  max_gas_limit: z.number().default(5000000),
+  private_key: OptionalStringSchema,
+  payment_address: AddressSchema.optional(),
+  allowed_sim_errors: z.string().array().default([]),
+});
 
-export class ConfigDocker {
-  constructor(public username: string, public password: string) {}
-}
+const ConfigSnapshotSyncSchema = z.object({
+  sleep: z.number().default(1),
+  batch_size: z.number().default(500),
+  starting_sub_id: z.number().default(0),
+  sync_period: z.number().default(0.5),
+});
 
-export class InfernetContainer {
-  constructor(
-    public id: string,
-    public image: string = '',
-    public url: string = '',
-    public bearer: string = '',
-    public port: number = 3000,
-    public external: boolean = true,
-    public gpu: boolean = false,
-    public accepted_payments: {
-      [key: string]: number;
-    } = {},
-    public allowed_ips: string[] = [],
-    public allowed_addresses: string[] = [],
-    public allowed_delegate_addresses: string[] = [],
-    public description: string = '',
-    public command: string = '',
-    public env: {
-      [key: string]: any;
-    } = {},
-    public generates_proofs: boolean = false,
-    public volumes: string[] = []
-  ) {}
-}
-
-export class ConfigRedis {
-  constructor(public host: string = 'redis', public port: number = 6379) {}
-}
-
-export class ConfigLog {
-  constructor(
-    public path: string = 'infernet_node.log',
-    public max_file_size: number = 2 ** 30,
-    public backup_count: number = 2
-  ) {}
-}
-
-export class Config {
-  constructor(
-    public containers: InfernetContainer[] = [],
-    public chain: ConfigChain = new ConfigChain(),
-    public docker?: ConfigDocker,
-    public forward_stats: boolean = true,
-    public log: ConfigLog = new ConfigLog(),
-    public manage_containers: boolean = true,
-    public redis: ConfigRedis = new ConfigRedis(),
-    public server: ConfigServer = new ConfigServer(),
-    public startup_wait: number = 5
-  ) {
-    if (chain.enabled) {
-      if (!chain.rpc_url)
-        throw new Error('rpc_url must be defined when chain is enabled');
-
-      if (!chain.registry_address)
-        throw new Error(
-          'registry_address must be defined when chain is enabled'
-        );
-
-      if (!chain.wallet)
-        throw new Error('wallet must be defined when chain is enabled');
-
-      if (!chain.wallet.private_key)
-        throw new Error('private_key must be defined when chain is enabled');
+const ConfigChainSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    rpc_url: OptionalStringSchema,
+    trail_head_blocks: z.number().default(1),
+    registry_address: AddressSchema.optional(),
+    wallet: ConfigWalletSchema.optional(),
+    snapshot_sync: ConfigSnapshotSyncSchema.default(
+      ConfigSnapshotSyncSchema.parse({})
+    ),
+  })
+  .refine(({ enabled, rpc_url }) => (enabled ? !!rpc_url : true), {
+    message: 'rpc_url must be defined when chain is enabled',
+  })
+  .refine(
+    ({ enabled, registry_address }) => (enabled ? !!registry_address : true),
+    {
+      message: 'registry_address must be defined when chain is enabled',
     }
+  )
+  .refine(({ enabled, wallet }) => (enabled ? wallet : true), {
+    message: 'wallet must be defined when chain is enabled',
+  })
+  .refine(({ enabled, wallet }) => (enabled ? wallet?.private_key : true), {
+    message: 'private_key must be defined when chain is enabled',
+  });
 
-    if (manage_containers) {
-      containers.forEach((container) => {
-        if (!container.image)
-          throw new Error(
-            'image must be defined when manage_containers is set to true'
-          );
+const ConfigDockerSchema = z.object({
+  username: z.string(),
+  password: z.string(),
+});
 
-        if (container.url) {
-          console.warn(
-            "containers.url is set in config but it won't be used since manage_containers is set to true"
-          );
-        }
+const InfernetContainerSchema = z.object({
+  id: z.string(),
+  image: z.string().default(''),
+  url: z.string().default(''),
+  bearer: z.string().default(''),
+  port: z.number().default(3000),
+  external: z.boolean().default(true),
+  gpu: z.boolean().default(false),
+  accepted_payments: z.object({}).catchall(z.number()).default({}),
+  allowed_ips: z.string().array().default([]),
+  allowed_addresses: z.string().array().default([]),
+  allowed_delegate_addresses: z.string().array().default([]),
+  description: z.string().default(''),
+  command: z.string().default(''),
+  env: z.object({}).default({}),
+  generates_proofs: z.boolean().default(false),
+  volumes: z.string().array().default([]),
+});
 
-        if (container.bearer) {
-          console.warn(
-            "containers.bearer is set in config but it won't be used since manage_containers is set to true"
-          );
-        }
-      });
+const ConfigRedisSchema = z.object({
+  host: z.string().default('redis'),
+  port: z.number().default(6379),
+});
+
+const ConfigLogSchema = z.object({
+  path: z.string().default('infernet_node.log'),
+  max_file_size: z.number().default(2 ** 30),
+  backup_count: z.number().default(2),
+});
+
+const ConfigSchema = z
+  .object({
+    containers: InfernetContainerSchema.array().default([]),
+    chain: ConfigChainSchema,
+    docker: ConfigDockerSchema.optional(),
+    forward_stats: z.boolean().default(true),
+    log: ConfigLogSchema.default(ConfigLogSchema.parse({})),
+    manage_containers: z.boolean().default(true),
+    redis: ConfigRedisSchema.default(ConfigRedisSchema.parse({})),
+    server: ConfigServerSchema.default(ConfigServerSchema.parse({})),
+    startup_wait: z.number().default(5),
+  })
+  .refine(
+    ({ manage_containers, containers }) =>
+      manage_containers
+        ? containers.every((container) => !!container.image)
+        : true,
+    {
+      message: 'Image must be defined when manage_containers is set to true',
     }
-  }
-}
+  );
 
-export const loadValidatedConfig = async (
+export type ConfigRateLimit = z.infer<typeof ConfigRateLimitSchema>;
+
+export type ConfigServer = z.infer<typeof ConfigServerSchema>;
+
+export type ConfigWallet = z.infer<typeof ConfigWalletSchema>;
+
+export type ConfigSnapshotSync = z.infer<typeof ConfigSnapshotSyncSchema>;
+
+export type ConfigChain = z.infer<typeof ConfigChainSchema>;
+
+export type ConfigDocker = z.infer<typeof ConfigDockerSchema>;
+
+export type InfernetContainer = z.infer<typeof InfernetContainerSchema>;
+
+export type ConfigRedis = z.infer<typeof ConfigRedisSchema>;
+
+export type ConfigLog = z.infer<typeof ConfigLogSchema>;
+
+export type Config = z.infer<typeof ConfigSchema>;
+
+export const loadValidatedConfig = (
   path = 'config.json'
-): Promise<Config> => {
+): z.infer<typeof ConfigSchema> => {
   const {
     containers,
     chain,
@@ -146,9 +151,9 @@ export const loadValidatedConfig = async (
     redis,
     server,
     startup_wait,
-  } = JSON.parse(await fs.readFileSync(path, 'utf8'));
+  } = JSON.parse(fs.readFileSync(path, 'utf8'));
 
-  return new Config(
+  const config = ConfigSchema.parse({
     containers,
     chain,
     docker,
@@ -157,6 +162,20 @@ export const loadValidatedConfig = async (
     manage_containers,
     redis,
     server,
-    startup_wait
-  );
+    startup_wait,
+  });
+
+  if (config.manage_containers) {
+    if (config.containers.find(({ url }) => !!url))
+      console.warn(
+        `containers.url is set in config but it won't be used since manage_containers is set to true`
+      );
+
+    if (config.containers.find(({ bearer }) => !!bearer))
+      console.warn(
+        `containers.bearer is set in config but it won't be used since manage_containers is set to true`
+      );
+  }
+
+  return config;
 };
