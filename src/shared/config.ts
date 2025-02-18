@@ -154,7 +154,9 @@ export const loadValidatedConfig = (
     startup_wait,
   } = JSON.parse(fs.readFileSync(path, 'utf8'));
 
-  const config = ConfigSchema.parse({
+  // `safeParse` returns an object containing either the successfully parsed data or a ZodError instance
+  // containing detailed information about the validation problems instead of throwing an error.
+  const { data, error } = ConfigSchema.safeParse({
     containers,
     chain,
     docker,
@@ -166,17 +168,23 @@ export const loadValidatedConfig = (
     startup_wait,
   });
 
-  if (config.manage_containers) {
-    if (config.containers.find(({ url }) => !!url))
+  if (!data) {
+    console.error('Config file validation failed', { config_path: path });
+
+    throw error;
+  }
+
+  if (data.manage_containers) {
+    if (data.containers.find(({ url }) => !!url))
       console.warn(
         `containers.url is set in config but it won't be used since manage_containers is set to true`
       );
 
-    if (config.containers.find(({ bearer }) => !!bearer))
+    if (data.containers.find(({ bearer }) => !!bearer))
       console.warn(
         `containers.bearer is set in config but it won't be used since manage_containers is set to true`
       );
   }
 
-  return config;
+  return data;
 };

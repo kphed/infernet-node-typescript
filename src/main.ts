@@ -32,18 +32,19 @@ const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
 class NodeLifecycle {
   #tasks: AsyncTask[] = [];
 
-  async initialize() {
-    let config: Config;
-
+  async on_startup() {
     try {
-      config = await loadValidatedConfig(configPath);
+      const config: Config = await loadValidatedConfig(configPath);
 
       await checkNodeIsUpToDate();
 
       const chainEnabled = config.chain.enabled;
-      config.containers = assignPorts(config.containers);
+
+      console.debug('Running startup', { chain_enabled: chainEnabled });
+
+      const containerConfigs = assignPorts(config.containers);
       const manager = new ContainerManager(
-        config.containers,
+        containerConfigs,
         config.docker,
         config.startup_wait,
         config.manage_containers
@@ -58,7 +59,7 @@ class NodeLifecycle {
       await store.setup_redis_clients();
 
       const orchestrator = new Orchestrator(manager, store);
-      const containerLookup = new ContainerLookup(config.containers);
+      const containerLookup = new ContainerLookup(containerConfigs);
 
       // Initialize chain-specific tasks.
       let processor: ChainProcessor;
@@ -83,11 +84,11 @@ class NodeLifecycle {
         const walletChecker = new WalletChecker(
           rpc,
           registry,
-          config.containers,
+          containerConfigs,
           paymentAddress
         );
         guardian = new Guardian(
-          config.containers,
+          containerConfigs,
           chainEnabled,
           containerLookup,
           walletChecker
@@ -134,7 +135,7 @@ class NodeLifecycle {
         this.#tasks = this.#tasks.concat([processor, listener]);
       } else {
         guardian = new Guardian(
-          config.containers,
+          containerConfigs,
           chainEnabled,
           containerLookup
         );
@@ -148,5 +149,5 @@ class NodeLifecycle {
 (async () => {
   const nodeLifecycle = new NodeLifecycle();
 
-  await nodeLifecycle.initialize();
+  await nodeLifecycle.on_startup();
 })();
