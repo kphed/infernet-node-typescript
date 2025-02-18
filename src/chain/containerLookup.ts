@@ -1,16 +1,46 @@
-// Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/chain/container_lookup.py.
+// Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/chain/containerLookup.py.
 import { keccak256, encodeAbiParameters, Hex } from 'viem';
-import { permutations } from '../utils/helpers';
 import { InfernetContainer } from '../shared/config';
 
-/**
- * Get all possible permutations of comma-separated container IDs. It performs this on
- * the containers array, which includes all possible combinations of containers.
- */
+// Generate container ID permutations (comma-separated). E.g. ['hello', 'world', 'hello,world', 'world,hello'].
 export const getAllCommaSeparatedPermutations = (
   containers: string[]
 ): string[] => {
-  let permutedElements: any = [];
+  // Based on: https://docs.python.org/3/library/itertools.html#itertools.permutations.
+  const permutations = <T>(
+    iterable: T[] | string,
+    len: number = iterable.length
+  ): T[][] => {
+    // If `len` is greater than the number of items, return an empty array immediately.
+    if (len > iterable.length) return [];
+
+    const items =
+      typeof iterable === 'string'
+        ? (iterable.split('') as any as T[])
+        : iterable;
+    const results: T[][] = [];
+
+    const createPermutation = (current: T[], remaining: T[]): void => {
+      if (current.length === len) {
+        results.push(current);
+
+        return;
+      }
+
+      for (let i = 0; i < remaining.length; i++) {
+        const newRemaining = remaining
+          .slice(0, i)
+          .concat(remaining.slice(i + 1));
+
+        createPermutation([...current, remaining[i]], newRemaining);
+      }
+    };
+
+    createPermutation([], items);
+
+    return results;
+  };
+  let permutedElements: string[] = [];
 
   for (let i = 2; i <= containers.length; i++) {
     permutedElements = [
@@ -24,48 +54,36 @@ export const getAllCommaSeparatedPermutations = (
   return [...containers, ...permutedElements];
 };
 
+// ABI-encode and hash a container ID permutation.
+export const computePermutationHash = (permutation: string): Hex =>
+  keccak256(encodeAbiParameters([{ type: 'string' }], [permutation]));
+
 export class ContainerLookup {
-  #container_lookup: {
+  #containerLookup: {
     [key: string]: string[];
   } = {};
 
   constructor(configs: InfernetContainer[]) {
-    this.#init_container_lookup(configs);
-  }
-
-  /**
-   * Build a lookup table keccak hash of a container set -> container set.
-   *
-   * Since the containers field of a subscription is a keccak hash of the
-   * comma-separated container IDs that it requires, we need to build a lookup
-   * table of all possible container sets on the node side to find out which
-   * containers are required for a given subscription.
-   */
-  #init_container_lookup(configs: InfernetContainer[]): void {
-    const allPermutations = getAllCommaSeparatedPermutations(
+    const permutations: string[] = getAllCommaSeparatedPermutations(
       configs.map(({ id }) => id)
     );
-    const calculateHash = (permutation: string): Hex =>
-      keccak256(encodeAbiParameters([{ type: 'string' }], [permutation]));
 
-    // Compute hashes for each of the container ID permutations.
-    this.#container_lookup = allPermutations.reduce(
-      (acc, val) => ({
+    this.#containerLookup = permutations.reduce(
+      (acc, permutation) => ({
         ...acc,
-        [calculateHash(val)]: val.split(','),
+        // E.g. computePermutationHash('hello,world'): ['hello', 'world'].
+        [computePermutationHash(permutation)]: permutation.split(','),
       }),
       {}
     );
 
     console.log(
-      `Initialized container lookup: ${JSON.stringify(this.#container_lookup)}`
+      `Initialized container lookup: ${JSON.stringify(this.#containerLookup)}`
     );
   }
 
-  /**
-   * Get the container IDs from a keccak hash. Returns an empty array if the hash is not found.
-   */
+  // Look up a set of containers by their hash.
   get_containers(hash: string): string[] {
-    return this.#container_lookup[hash] ?? [];
+    return this.#containerLookup[hash] ?? [];
   }
 }
