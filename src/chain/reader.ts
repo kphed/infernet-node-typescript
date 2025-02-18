@@ -35,7 +35,7 @@ export class Reader {
   /**
    * Reads Subscriptions from Coordinator in batch.
    */
-  async reader_subscription_batch(
+  async read_subscription_batch(
     start_id: number,
     end_id: number,
     block_number: BlockNumber
