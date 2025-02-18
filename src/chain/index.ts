@@ -7,6 +7,7 @@ import { WalletChecker } from './walletChecker';
 import { Coordinator } from './coordinator';
 import { Reader } from './reader';
 import { PaymentWallet } from './paymentWallet';
+import { ChainListener } from './listener';
 
 export {
   ContainerLookup,
@@ -18,4 +19,5 @@ export {
   Coordinator,
   Reader,
   PaymentWallet,
+  ChainListener,
 };

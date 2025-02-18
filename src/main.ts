@@ -23,97 +23,130 @@ import {
   Coordinator,
   Reader,
   PaymentWallet,
+  ChainListener,
 } from './chain';
+import { AsyncTask } from './shared/service';
 
 const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
 
-(async () => {
-  let config: Config;
+class NodeLifecycle {
+  #tasks: AsyncTask[] = [];
 
-  try {
-    config = await loadValidatedConfig(configPath);
+  async initialize() {
+    let config: Config;
 
-    await checkNodeIsUpToDate();
+    try {
+      config = await loadValidatedConfig(configPath);
 
-    const chainEnabled = config.chain.enabled;
-    config.containers = assignPorts(config.containers);
-    const containerManager = new ContainerManager(
-      config.containers,
-      config.docker,
-      config.startup_wait,
-      config.manage_containers
-    );
+      await checkNodeIsUpToDate();
 
-    await containerManager.setup();
-
-    const store = new DataStore(config.redis.host, config.redis.port);
-
-    await store.setup_redis_clients();
-
-    const orchestrator = new Orchestrator(containerManager, store);
-    const containerLookup = new ContainerLookup(config.containers);
-
-    // Initialize chain-specific tasks.
-    let process: ChainProcessor;
-    let wallet: Wallet;
-    let chainId: number;
-
-    if (chainEnabled) {
-      const walletConfig = config.chain.wallet as ConfigWallet;
-      const rpcUrl = config.chain.rpc_url as string;
-      const registryAddress = config.chain.registry_address as string;
-      const privateKey = add0x(walletConfig.private_key as string);
-      const rpc = new RPC(rpcUrl, privateKey);
-      chainId = await rpc.get_chain_id();
-      const registry = new Registry(
-        rpc,
-        RPC.get_checksum_address(registryAddress)
-      );
-      const paymentAddress = walletConfig.payment_address
-        ? RPC.get_checksum_address(walletConfig.payment_address)
-        : undefined;
-      const walletChecker = new WalletChecker(
-        rpc,
-        registry,
+      const chainEnabled = config.chain.enabled;
+      config.containers = assignPorts(config.containers);
+      const manager = new ContainerManager(
         config.containers,
-        paymentAddress
-      );
-      const guardian = new Guardian(
-        config.containers,
-        chainEnabled,
-        containerLookup,
-        walletChecker
+        config.docker,
+        config.startup_wait,
+        config.manage_containers
       );
 
-      await registry.populate_addresses();
+      this.#tasks.push(manager);
 
-      const coordinator = new Coordinator(
-        rpc,
-        registry.coordinator(),
-        containerLookup
-      );
-      const reader = new Reader(rpc, registry.reader(), containerLookup);
-      const wallet = new Wallet(
-        rpc,
-        coordinator,
-        privateKey,
-        BigInt(walletConfig.max_gas_limit),
-        paymentAddress,
-        walletConfig.allowed_sim_errors
-      );
-      const paymentWallet = new PaymentWallet(paymentAddress, rpc);
-      const processor = new ChainProcessor(
-        rpc,
-        coordinator,
-        wallet,
-        paymentWallet,
-        walletChecker,
-        registry,
-        orchestrator,
-        containerLookup
-      );
+      await manager.setup();
+
+      const store = new DataStore(config.redis.host, config.redis.port);
+
+      await store.setup_redis_clients();
+
+      const orchestrator = new Orchestrator(manager, store);
+      const containerLookup = new ContainerLookup(config.containers);
+
+      // Initialize chain-specific tasks.
+      let processor: ChainProcessor;
+      let wallet: Wallet;
+      let guardian: Guardian;
+      let chainId: number;
+
+      if (chainEnabled) {
+        const walletConfig = config.chain.wallet as ConfigWallet;
+        const rpcUrl = config.chain.rpc_url as string;
+        const registryAddress = config.chain.registry_address as string;
+        const privateKey = add0x(walletConfig.private_key as string);
+        const rpc = new RPC(rpcUrl, privateKey);
+        chainId = await rpc.get_chain_id();
+        const registry = new Registry(
+          rpc,
+          RPC.get_checksum_address(registryAddress)
+        );
+        const paymentAddress = walletConfig.payment_address
+          ? RPC.get_checksum_address(walletConfig.payment_address)
+          : undefined;
+        const walletChecker = new WalletChecker(
+          rpc,
+          registry,
+          config.containers,
+          paymentAddress
+        );
+        guardian = new Guardian(
+          config.containers,
+          chainEnabled,
+          containerLookup,
+          walletChecker
+        );
+
+        await registry.populate_addresses();
+
+        const coordinator = new Coordinator(
+          rpc,
+          registry.coordinator(),
+          containerLookup
+        );
+        const reader = new Reader(rpc, registry.reader(), containerLookup);
+        wallet = new Wallet(
+          rpc,
+          coordinator,
+          privateKey,
+          BigInt(walletConfig.max_gas_limit),
+          paymentAddress,
+          walletConfig.allowed_sim_errors
+        );
+        const paymentWallet = new PaymentWallet(paymentAddress, rpc);
+        processor = new ChainProcessor(
+          rpc,
+          coordinator,
+          wallet,
+          paymentWallet,
+          walletChecker,
+          registry,
+          orchestrator,
+          containerLookup
+        );
+        const listener = new ChainListener(
+          rpc,
+          coordinator,
+          registry,
+          reader,
+          guardian,
+          processor,
+          config.chain.trail_head_blocks,
+          config.chain.snapshot_sync
+        );
+
+        this.#tasks = this.#tasks.concat([processor, listener]);
+      } else {
+        guardian = new Guardian(
+          config.containers,
+          chainEnabled,
+          containerLookup
+        );
+      }
+    } catch (err) {
+      throw `Config file validation failed: ${err}`;
     }
-  } catch (err) {
-    throw `Config file validation failed: ${err}`;
   }
+}
+
+(async () => {
+  const nodeLifecycle = new NodeLifecycle();
+
+  await nodeLifecycle.initialize();
 })();
