@@ -158,11 +158,7 @@ export class Guardian {
     error: string,
     params?: any
   ): GuardianError {
-    return {
-      message,
-      error,
-      params,
-    };
+    return new GuardianError(message, error, params);
   }
 
   /**
@@ -359,9 +355,11 @@ export class Guardian {
   process_message(message: PrefilterMessage): GuardianError | FilteredMessage {
     switch (message.type) {
       case MessageType.OffchainJob:
-        return this.#process_offchain_message(message);
+        return this.#process_offchain_message(message as OffchainJobMessage);
       case MessageType.DelegatedSubscription:
-        return this.#process_delegated_subscription_message(message);
+        return this.#process_delegated_subscription_message(
+          message as DelegatedSubscriptionMessage
+        );
       case MessageType.SubscriptionCreated:
         return this.#process_coordinator_created_message(message);
       default:
