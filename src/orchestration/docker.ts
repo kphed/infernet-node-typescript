@@ -7,9 +7,6 @@ import { AsyncTask } from '../shared/service';
 import dockerClient from '../docker/client';
 import { delay } from '../utils/helpers';
 
-// 60 seconds.
-const DEFAULT_CONTAINER_STOP_TIMEOUT = 60_000;
-
 export class ContainerManager extends AsyncTask {
   static fieldSchemas = {
     _configs: InfernetContainerSchema.array(),
@@ -72,6 +69,12 @@ export class ContainerManager extends AsyncTask {
       returns: z.promise(z.void()),
     },
     _pull_images: {
+      returns: z.promise(z.void()),
+    },
+    _prune_containers: {
+      returns: z.promise(z.void()),
+    },
+    _run_containers: {
       returns: z.promise(z.void()),
     },
   };
@@ -313,9 +316,7 @@ export class ContainerManager extends AsyncTask {
       setTimeout(monitorContainers, 10_000);
     };
 
-    return ContainerManager.methodSchemas.setup.returns.parse(
-      monitorContainers()
-    );
+    monitorContainers();
   }
 
   // Attempts to stop all configured containers.
@@ -326,20 +327,19 @@ export class ContainerManager extends AsyncTask {
 
     console.log('Stopping containers');
 
-    return ContainerManager.methodSchemas.setup.returns.parse(
-      Promise.all(
-        map(this.#containers, async (container, containerId) => {
-          try {
-            await container.stop({
-              abortSignal: AbortSignal.timeout(DEFAULT_CONTAINER_STOP_TIMEOUT),
-            });
-          } catch (err) {
-            console.error(`Error stopping container ${containerId}`, {
-              error: err,
-            });
-          }
-        })
-      )
+    await Promise.all(
+      map(this.#containers, async (container, containerId) => {
+        try {
+          await container.stop({
+            // Abort request after 60 seconds.
+            abortSignal: AbortSignal.timeout(60_000),
+          });
+        } catch (err) {
+          console.error(`Error stopping container ${containerId}`, {
+            error: err,
+          });
+        }
+      })
     );
   }
 
@@ -400,96 +400,69 @@ export class ContainerManager extends AsyncTask {
       }
     };
 
-    try {
-      // Pull images in parallel.
-      await Promise.all(this.#images.map(pullImage));
-    } catch (err) {
+    // Pull images in parallel.
+    const imagePullAttempts = await Promise.all(this.#images.map(pullImage));
+
+    if (imagePullAttempts.find((attempt) => !attempt))
       throw new Error('Could not pull all images.');
-    }
   }
 
-  /**
-   * Force stops and removes any (running) containers with names matching any IDs
-   * provided in the managed containers config.
-   */
-  async #prune_containers(): Promise<void> {
-    try {
-      const containers = (
-        await this.client.listContainers({ all: true })
-      ).reduce(
-        (acc, { Names, Id }) => ({
-          ...acc,
-          [Names[0].substring(1)]: Id,
-        }),
-        {}
-      );
+  // Force stops and removes any node-managed containers that are running.
+  async #prune_containers(): z.infer<
+    typeof ContainerManager.methodSchemas._prune_containers.returns
+  > {
+    const containers = (
+      await this.client.listContainers({ all: false })
+    ).reduce((acc, { Names, Id }) => {
+      const name = Names[0].substring(1);
 
-      await Promise.all(
-        this.#configs.map(async (config) => {
-          const containerId = containers[config.id];
+      // Ensure that only node-managed containers will be pruned.
+      if (this.#configs.find(({ id }) => name === id)) return [...acc, Id];
 
-          if (!containerId) return;
+      return acc;
+    }, []);
 
-          console.warn(`Pruning container ${containerId}`);
+    await Promise.all(
+      containers.map(async (containerId) => {
+        console.warn(`Pruning container ${containerId}`);
 
+        await this.client.getContainer(containerId).remove({ force: true });
+      })
+    );
+  }
+
+  // Runs all containers with given configurations.
+  async #run_containers(): z.infer<
+    typeof ContainerManager.methodSchemas._prune_containers.returns
+  > {
+    await Promise.all(
+      this.#configs.map(
+        async ({ id, image, port, env, gpu, volumes, command }) => {
           try {
-            await this.client.getContainer(containerId).remove({ force: true });
-          } catch (err) {
-            console.error(`Error pruning container ${containerId}`);
+            const container = this.client.getContainer(id);
+            const containerDetails = await container.inspect();
 
-            throw err;
-          }
-        })
-      );
-    } catch (err) {
-      console.error('Error pruning containers');
+            this.#containers[id] = container;
 
-      throw err;
-    }
-  }
+            if (containerDetails.State.Status !== 'running')
+              await container.start();
 
-  /**
-   * Runs all containers with given configurations.
-   */
-  async #run_containers() {
-    try {
-      const existingContainers = (
-        await this.client.listContainers({ all: true })
-      ).reduce((acc, val) => {
-        const { State, Id, Image, Created } = val;
+            const containerHostPort: number = z.coerce
+              .number()
+              .parse(
+                containerDetails.NetworkSettings.Ports['3000/tcp'][0].HostPort
+              );
 
-        // Skip the container if it is older than the one currently stored.
-        if (acc[Image] && acc[Image].created > Created) return acc;
+            if (port !== containerHostPort)
+              console.warn(
+                `Container '${id}' is already running on port ${containerHostPort}, disregarding requested port ${port}.`
+              );
 
-        return {
-          ...acc,
-          [Image]: {
-            id: Id,
-            created: Created,
-            isRunning: State === 'running',
-          },
-        };
-      }, {});
-
-      await Promise.all(
-        this.#configs.map(
-          async ({ id, image, port, env, gpu, volumes, command }) => {
-            const existingContainer = existingContainers[image];
-            let container;
-
-            // If the container exists and is not running, start the container.
-            if (existingContainer) {
-              container = this.client.getContainer(existingContainer.id);
-
-              if (!existingContainer.isRunning) {
-                await container.start();
-
-                console.info(
-                  `Started existing container '${id}' on port ${port}`
-                );
-              }
-            } else {
+            console.info(`Started existing container '${id}' on port ${port}`);
+          } catch (err: any) {
+            if (err.reason === 'no such container') {
               const containerPort = '3000/tcp';
+              const envKeys = env ? Object.keys(env) : [];
               const containerConfig = {
                 Image: image,
                 ...(port
@@ -528,9 +501,9 @@ export class ContainerManager extends AsyncTask {
                     : {}),
                 },
                 ...(command ? { Cmd: command } : {}),
-                ...(env && Object.keys(env).length
+                ...(env && envKeys.length
                   ? {
-                      Env: Object.keys(env).reduce(
+                      Env: envKeys.reduce(
                         (acc: string[], val) => [...acc, `${val}=${env[val]}`],
                         []
                       ),
@@ -547,22 +520,26 @@ export class ContainerManager extends AsyncTask {
               };
 
               // If the container does not exist, create and run a new container with the given configuration.
-              container = await this.client.createContainer(containerConfig);
+              const container = await this.client.createContainer(
+                containerConfig
+              );
 
               await container.rename({ name: id });
               await container.start();
 
-              console.info(`Started new container '${id}' on port ${port}`);
-            }
+              this.#containers[id] = container;
 
-            // Store existing container object in state.
-            this.#containers[id] = container;
+              console.info(`Started new container '${id}' on port ${port}`);
+            } else {
+              console.warn(
+                'Encountered an unknown error while running containers',
+                err
+              );
+            }
           }
-        )
-      );
-    } catch (err) {
-      throw err;
-    }
+        }
+      )
+    );
   }
 
   cleanup(): void {}
