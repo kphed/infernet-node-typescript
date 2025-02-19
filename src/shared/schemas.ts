@@ -5,6 +5,10 @@ export const NumberSchema = z.number();
 
 export const StringSchema = z.string();
 
+export const BooleanSchema = z.boolean();
+
+export const ObjectSchema = z.object({});
+
 export const DefaultNumberSchema = (value: number) =>
   NumberSchema.default(value);
 
@@ -23,3 +27,7 @@ export const ChecksumAddressStringSchema = StringSchema.length(42).refine(
 );
 
 export const StrictObjectSchema = (value: any) => z.object(value).strict();
+
+export const NumberArraySchema = NumberSchema.array();
+
+export const StringArraySchema = StringSchema.array();

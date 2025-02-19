@@ -1,6 +1,15 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/44c4cc8acadd3c6904b74adaa595ac002ded0ebf/src/orchestration/docker.py.
 import Docker from 'dockerode';
-import { InfernetContainer, ConfigDocker } from '../shared/config';
+import { z } from 'zod';
+import {
+  NumberSchema,
+  StringSchema,
+  ObjectSchema,
+  StringArraySchema,
+  DefaultBooleanSchema,
+  DefaultNumberSchema,
+} from '../shared/schemas';
+import { InfernetContainerSchema, ConfigDockerSchema } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import dockerClient from '../docker/client';
 import { delay } from '../utils/helpers';
@@ -10,114 +19,106 @@ const DEFAULT_STARTUP_WAIT = 60_000;
 
 const DEFAULT_CONTAINER_STOP_TIMEOUT = 60_000;
 
+const ConfigsSchema = InfernetContainerSchema.array();
+const CredsSchema = ConfigDockerSchema.optional();
+const ImagesSchema = StringArraySchema;
+const PortMappingsSchema = ObjectSchema.catchall(NumberSchema);
+const UrlMappingsSchema = ObjectSchema.catchall(StringSchema);
+const BearerMappingsSchema = ObjectSchema.catchall(StringSchema);
+const ContainersSchema = ObjectSchema;
+const StartupWaitSchema = DefaultNumberSchema(DEFAULT_STARTUP_WAIT);
+const ManagedSchema = DefaultBooleanSchema(true);
+
+type PortMappingsType = z.infer<typeof PortMappingsSchema>;
+type StringArrayType = z.infer<typeof StringArraySchema>;
+
 export class ContainerManager extends AsyncTask {
-  #configs: InfernetContainer[];
-  #creds?: ConfigDocker;
-  #images: string[];
-  #port_mappings: {
-    [key: string]: number;
-  };
-  #url_mappings: {
-    [key: string]: string;
-  };
-  #bearer_mappings: {
-    [key: string]: string;
-  };
-  #startup_wait: number;
-  #managed: boolean;
-  #containers: {
-    [key: string]: any;
-  };
+  #configs: z.infer<typeof ConfigsSchema>;
+  #creds?: z.infer<typeof CredsSchema>;
+  #images: z.infer<typeof ImagesSchema>;
+  #port_mappings: PortMappingsType;
+  #url_mappings: z.infer<typeof UrlMappingsSchema>;
+  #bearer_mappings: z.infer<typeof BearerMappingsSchema>;
+  #startup_wait: z.infer<typeof NumberSchema>;
+  #managed: z.infer<typeof ManagedSchema>;
+  #containers: z.infer<typeof ContainersSchema>;
   client?: Docker;
 
-  /**
-   * Initialize ContainerManager with given configurations and credentials.
-   */
-  constructor(
-    configs: InfernetContainer[],
-    credentials?: ConfigDocker,
-    startup_wait: number = DEFAULT_STARTUP_WAIT,
-    managed: boolean = true
-  ) {
+  constructor(configs, credentials?, startup_wait?, managed?) {
     super();
 
-    this.#configs = configs;
-    this.#creds = credentials;
-    this.#images = configs.map(({ image }) => image);
-    this.#port_mappings = configs.reduce(
-      (acc, { id, port }) => ({
-        ...acc,
-        [id]: port,
-      }),
-      {}
+    this.#configs = ConfigsSchema.parse(configs);
+    this.#creds = CredsSchema.parse(credentials);
+    this.#images = ImagesSchema.parse(configs.map(({ image }) => image));
+    this.#port_mappings = PortMappingsSchema.parse(
+      configs.reduce(
+        (acc, { id, port }) => ({
+          ...acc,
+          [id]: port,
+        }),
+        {}
+      )
     );
-    this.#url_mappings = configs.reduce(
-      (acc, { id, url }) => ({
-        ...acc,
-        [id]: url,
-      }),
-      {}
+    this.#url_mappings = UrlMappingsSchema.parse(
+      configs.reduce(
+        (acc, { id, url }) => ({
+          ...acc,
+          [id]: url,
+        }),
+        {}
+      )
     );
-    this.#bearer_mappings = configs.reduce(
-      (acc, { id, bearer }) => ({
-        ...acc,
-        [id]: bearer,
-      }),
-      {}
+    this.#bearer_mappings = BearerMappingsSchema.parse(
+      configs.reduce(
+        (acc, { id, bearer }) => ({
+          ...acc,
+          [id]: bearer,
+        }),
+        {}
+      )
     );
-    this.#startup_wait = startup_wait;
-    this.#managed = managed;
+    this.#startup_wait = StartupWaitSchema.parse(startup_wait);
+    this.#managed = ManagedSchema.parse(managed);
     this.#containers = {};
 
-    if (managed)
+    if (this.#managed)
       this.client = dockerClient(credentials?.username, credentials?.password);
 
-    console.debug(
-      'Initialized Container Manager',
-      JSON.stringify(this.#port_mappings)
-    );
+    console.debug('Initialized Container Manager', {
+      port_mappings: this.#port_mappings,
+    });
   }
 
-  /**
-   * Port mappings for containers. Does NOT guarantee containers are running.
-   */
-  get port_mappings(): {
-    [key: string]: number;
-  } {
+  // Port mappings for containers. Does NOT guarantee containers are running.
+  get port_mappings(): PortMappingsType {
     return this.#port_mappings;
   }
 
-  /**
-   * Get list of running container IDs.
-   */
-  async running_containers(): Promise<string[]> {
+  // Get the list of running container IDs.
+  async running_containers(): Promise<StringArrayType> {
+    let containers: StringArrayType;
+
     // If not managed, return all container IDs as running.
-    if (!this.#managed) return this.#configs.map(({ id }) => id);
+    if (!this.#managed) {
+      containers = this.#configs.map(({ id }) => id);
+    } else {
+      const runningContainers = await this.client.listContainers({
+        all: false,
+      });
 
-    try {
-      const runningContainers = (await this.client.listContainers()).reduce(
-        (acc, { Names, State }) => {
-          if (State !== 'running') return acc;
+      containers = runningContainers.reduce((acc, { Names }) => {
+        const containerId = Names[0].substring(1);
 
-          return {
-            ...acc,
-            [Names[0].substring(1)]: true,
-          };
-        },
-        {}
-      );
+        if (this.#containers[containerId]) return [...acc, containerId];
 
-      return Object.keys(this.#containers).filter(
-        (key) => runningContainers[key]
-      );
-    } catch (err) {
-      throw err;
+        return acc;
+      }, []);
     }
+
+    return StringArraySchema.parse(containers);
   }
 
-  /**
-   * Get running container information.
-   */
+  // Get running container information.
   async running_container_info(): Promise<
     {
       [key: string]: any;

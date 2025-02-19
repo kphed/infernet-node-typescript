@@ -62,12 +62,12 @@ const ConfigChainSchema = z
     message: 'private_key must be defined when chain is enabled',
   });
 
-const ConfigDockerSchema = StrictObjectSchema({
+export const ConfigDockerSchema = StrictObjectSchema({
   username: StringSchema,
   password: StringSchema,
 });
 
-const InfernetContainerSchema = StrictObjectSchema({
+export const InfernetContainerSchema = StrictObjectSchema({
   id: StringSchema,
   image: DefaultStringSchema(''),
   url: DefaultStringSchema(''),
