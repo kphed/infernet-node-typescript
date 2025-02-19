@@ -71,6 +71,9 @@ export class ContainerManager extends AsyncTask {
     stop: {
       returns: z.promise(z.void()),
     },
+    _pull_images: {
+      returns: z.promise(z.void()),
+    },
   };
 
   #configs: z.infer<typeof ContainerManager.fieldSchemas._configs>;
@@ -340,30 +343,68 @@ export class ContainerManager extends AsyncTask {
     );
   }
 
-  /**
-   * Pulls all managed images in parallel.
-   */
-  async #pull_images(): Promise<void> {
+  // Pulls all managed images in parallel.
+  async #pull_images(): z.infer<
+    typeof ContainerManager.methodSchemas._pull_images.returns
+  > {
     console.info('Pulling images, this may take a while...');
 
-    try {
-      await Promise.all(
-        this.#images.map(async (image, index) => {
+    const pullImage = async (image) => {
+      try {
+        await new Promise((resolve, reject) => {
           console.debug(`Pulling image ${image}...`);
 
-          try {
-            await this.client.pull(image, undefined, undefined, this.#creds);
+          // Since `pull` doesn't return a promise, we have to use a callback function.
+          this.client.pull(
+            image,
+            {
+              authconfig: {
+                ...this.#creds,
+              },
+            },
+            (pullErr, stream) => {
+              if (pullErr) return reject(pullErr);
 
-            console.log(`Successfully pulled image ${image}`);
-          } catch (err) {
-            console.error(`Error pulling image ${image}: ${err}`);
-          }
-        })
-      );
+              // Use the `followProgress` helper to monitor the image streaming process,
+              // and execute a callback function only once it's complete.
+              this.client.modem.followProgress(
+                stream,
+                (onFinishErr, output) => {
+                  if (onFinishErr) return reject(onFinishErr);
+
+                  return resolve(output);
+                }
+              );
+            }
+          );
+        });
+
+        console.debug(`Successfully pulled image ${image}`);
+
+        return true;
+      } catch (err) {
+        try {
+          // Check if image exists locally.
+          await this.client.getImage(image).inspect();
+
+          console.info(`Image ${image} already exists locally`);
+
+          return true;
+        } catch (_) {
+          console.warn(`Image ${image} does not exist locally`);
+        }
+
+        console.error(`Error pulling image ${image}`, { error: err });
+
+        return false;
+      }
+    };
+
+    try {
+      // Pull images in parallel.
+      await Promise.all(this.#images.map(pullImage));
     } catch (err) {
-      console.error('Could not pull all images.');
-
-      throw err;
+      throw new Error('Could not pull all images.');
     }
   }
 
