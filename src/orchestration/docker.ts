@@ -1,56 +1,69 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/44c4cc8acadd3c6904b74adaa595ac002ded0ebf/src/orchestration/docker.py.
 import Docker from 'dockerode';
 import { z } from 'zod';
-import {
-  NumberSchema,
-  StringSchema,
-  ObjectSchema,
-  StringArraySchema,
-  DefaultBooleanSchema,
-  DefaultNumberSchema,
-} from '../shared/schemas';
 import { InfernetContainerSchema, ConfigDockerSchema } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import dockerClient from '../docker/client';
 import { delay } from '../utils/helpers';
 
 // 60 seconds.
-const DEFAULT_STARTUP_WAIT = 60_000;
-
 const DEFAULT_CONTAINER_STOP_TIMEOUT = 60_000;
 
-const ConfigsSchema = InfernetContainerSchema.array();
-const CredsSchema = ConfigDockerSchema.optional();
-const ImagesSchema = StringArraySchema;
-const PortMappingsSchema = ObjectSchema.catchall(NumberSchema);
-const UrlMappingsSchema = ObjectSchema.catchall(StringSchema);
-const BearerMappingsSchema = ObjectSchema.catchall(StringSchema);
-const ContainersSchema = ObjectSchema;
-const StartupWaitSchema = DefaultNumberSchema(DEFAULT_STARTUP_WAIT);
-const ManagedSchema = DefaultBooleanSchema(true);
-
-type PortMappingsType = z.infer<typeof PortMappingsSchema>;
-type StringArrayType = z.infer<typeof StringArraySchema>;
-
 export class ContainerManager extends AsyncTask {
-  #configs: z.infer<typeof ConfigsSchema>;
-  #creds?: z.infer<typeof CredsSchema>;
-  #images: z.infer<typeof ImagesSchema>;
-  #port_mappings: PortMappingsType;
-  #url_mappings: z.infer<typeof UrlMappingsSchema>;
-  #bearer_mappings: z.infer<typeof BearerMappingsSchema>;
-  #startup_wait: z.infer<typeof NumberSchema>;
-  #managed: z.infer<typeof ManagedSchema>;
-  #containers: z.infer<typeof ContainersSchema>;
+  static fieldSchemas = {
+    _configs: InfernetContainerSchema.array(),
+    _creds: ConfigDockerSchema.optional(),
+    _images: z.string().array(),
+    _port_mappings: z.object({}).catchall(z.number()),
+    _url_mappings: z.object({}).catchall(z.string()),
+    _bearer_mappings: z.object({}).catchall(z.string()),
+    _startup_wait: z.number().default(60_000),
+    _managed: z.boolean().default(true),
+    _containers: z.object({}),
+  };
+
+  static methodSchemas = {
+    port_mappings: {
+      returns: z.object({}).catchall(z.number()),
+    },
+    running_containers: {
+      returns: z.string().array(),
+    },
+    running_container_info: {
+      returns: z
+        .object({
+          id: z.string(),
+          description: z.string().default(''),
+          external: z.boolean(),
+          image: z.string(),
+        })
+        .strict()
+        .array(),
+    },
+  };
+
+  #configs: z.infer<typeof ContainerManager.fieldSchemas._configs>;
+  #creds?: z.infer<typeof ContainerManager.fieldSchemas._creds>;
+  #images: z.infer<typeof ContainerManager.fieldSchemas._images>;
+  #port_mappings: z.infer<typeof ContainerManager.fieldSchemas._port_mappings>;
+  #url_mappings: z.infer<typeof ContainerManager.fieldSchemas._url_mappings>;
+  #bearer_mappings: z.infer<
+    typeof ContainerManager.fieldSchemas._bearer_mappings
+  >;
+  #startup_wait: z.infer<typeof ContainerManager.fieldSchemas._startup_wait>;
+  #managed: z.infer<typeof ContainerManager.fieldSchemas._managed>;
+  #containers: z.infer<typeof ContainerManager.fieldSchemas._containers>;
   client?: Docker;
 
   constructor(configs, credentials?, startup_wait?, managed?) {
     super();
 
-    this.#configs = ConfigsSchema.parse(configs);
-    this.#creds = CredsSchema.parse(credentials);
-    this.#images = ImagesSchema.parse(configs.map(({ image }) => image));
-    this.#port_mappings = PortMappingsSchema.parse(
+    this.#configs = ContainerManager.fieldSchemas._configs.parse(configs);
+    this.#creds = ContainerManager.fieldSchemas._creds.parse(credentials);
+    this.#images = ContainerManager.fieldSchemas._images.parse(
+      configs.map(({ image }) => image)
+    );
+    this.#port_mappings = ContainerManager.fieldSchemas._port_mappings.parse(
       configs.reduce(
         (acc, { id, port }) => ({
           ...acc,
@@ -59,7 +72,7 @@ export class ContainerManager extends AsyncTask {
         {}
       )
     );
-    this.#url_mappings = UrlMappingsSchema.parse(
+    this.#url_mappings = ContainerManager.fieldSchemas._url_mappings.parse(
       configs.reduce(
         (acc, { id, url }) => ({
           ...acc,
@@ -68,18 +81,20 @@ export class ContainerManager extends AsyncTask {
         {}
       )
     );
-    this.#bearer_mappings = BearerMappingsSchema.parse(
-      configs.reduce(
-        (acc, { id, bearer }) => ({
-          ...acc,
-          [id]: bearer,
-        }),
-        {}
-      )
-    );
-    this.#startup_wait = StartupWaitSchema.parse(startup_wait);
-    this.#managed = ManagedSchema.parse(managed);
-    this.#containers = {};
+    this.#bearer_mappings =
+      ContainerManager.fieldSchemas._bearer_mappings.parse(
+        configs.reduce(
+          (acc, { id, bearer }) => ({
+            ...acc,
+            [id]: bearer,
+          }),
+          {}
+        )
+      );
+    this.#startup_wait =
+      ContainerManager.fieldSchemas._startup_wait.parse(startup_wait);
+    this.#managed = ContainerManager.fieldSchemas._managed.parse(managed);
+    this.#containers = ContainerManager.fieldSchemas._containers.parse({});
 
     if (this.#managed)
       this.client = dockerClient(credentials?.username, credentials?.password);
@@ -90,13 +105,17 @@ export class ContainerManager extends AsyncTask {
   }
 
   // Port mappings for containers. Does NOT guarantee containers are running.
-  get port_mappings(): PortMappingsType {
+  get port_mappings(): z.infer<
+    typeof ContainerManager.methodSchemas.port_mappings.returns
+  > {
     return this.#port_mappings;
   }
 
   // Get the list of running container IDs.
-  async running_containers(): Promise<StringArrayType> {
-    let containers: StringArrayType;
+  async running_containers(): Promise<
+    z.infer<typeof ContainerManager.methodSchemas.running_containers.returns>
+  > {
+    let containers;
 
     // If not managed, return all container IDs as running.
     if (!this.#managed) {
@@ -115,63 +134,52 @@ export class ContainerManager extends AsyncTask {
       }, []);
     }
 
-    return StringArraySchema.parse(containers);
+    return ContainerManager.methodSchemas.running_containers.returns.parse(
+      containers
+    );
   }
 
   // Get running container information.
   async running_container_info(): Promise<
-    {
-      [key: string]: any;
-    }[]
+    z.infer<
+      typeof ContainerManager.methodSchemas.running_container_info.returns
+    >
   > {
-    const runningContainerIds = (await this.running_containers()).reduce(
-      (acc, val) => ({ ...acc, [val]: true }),
-      {}
-    );
+    const runningContainerIds = await this.running_containers();
 
-    return this.#configs.reduce(
-      (
-        acc: {
-          id: string;
-          description: string;
-          external: boolean;
-          image: string;
-        }[],
-        { id, description, external, image }
-      ) =>
-        // If the container is running, add it to the list of running container info.
-        runningContainerIds[id]
-          ? [
-              ...acc,
-              {
-                id,
-                description,
-                external,
-                image,
-              },
-            ]
-          : acc,
-      []
+    return ContainerManager.methodSchemas.running_container_info.returns.parse(
+      this.#configs.reduce(
+        (acc: any, { id, description, external, image }) =>
+          // If the container is running, add it to the list of running container info.
+          runningContainerIds.find(
+            (runningContainerId) => runningContainerId === id
+          )
+            ? [
+                ...acc,
+                {
+                  id,
+                  description,
+                  external,
+                  image,
+                },
+              ]
+            : acc,
+        []
+      )
     );
   }
 
-  /**
-   * Returns port for given container.
-   */
+  // Returns port for given container.
   get_port(container: string): number {
     return this.#port_mappings[container];
   }
 
-  /**
-   * Returns url for given container.
-   */
+  // Returns url for given container.
   get_url(container: string): string {
     return this.#url_mappings[container];
   }
 
-  /**
-   * Returns bearer auth token for given container.
-   */
+  // Returns bearer auth token for given container.
   get_bearer(container: string): string {
     return this.#bearer_mappings[container];
   }

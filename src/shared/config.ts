@@ -1,46 +1,46 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/073594fc5edafc9e78b8286b943565bd6d5b25c5/src/shared/config.py.
 import fs from 'fs';
 import { z } from 'zod';
-import {
-  NumberSchema,
-  StringSchema,
-  DefaultNumberSchema,
-  DefaultStringSchema,
-  DefaultBooleanSchema,
-  AddressStringSchema,
-  StrictObjectSchema,
-} from './schemas';
+import { AddressSchema } from './schemas';
 
-const ConfigRateLimitSchema = StrictObjectSchema({
-  num_requests: DefaultNumberSchema(60),
-  period: DefaultNumberSchema(60),
-});
+const ConfigRateLimitSchema = z
+  .object({
+    num_requests: z.number().default(60),
+    period: z.number().default(60),
+  })
+  .strict();
 
-const ConfigServerSchema = StrictObjectSchema({
-  port: DefaultNumberSchema(4000),
-  rate_limit: ConfigRateLimitSchema.default(ConfigRateLimitSchema.parse({})),
-});
+const ConfigServerSchema = z
+  .object({
+    port: z.number().default(4000),
+    rate_limit: ConfigRateLimitSchema.default(ConfigRateLimitSchema.parse({})),
+  })
+  .strict();
 
-const ConfigWalletSchema = StrictObjectSchema({
-  max_gas_limit: DefaultNumberSchema(5000000),
-  private_key: StringSchema.optional(),
-  payment_address: AddressStringSchema.optional(),
-  allowed_sim_errors: StringSchema.array().default([]),
-});
+const ConfigWalletSchema = z
+  .object({
+    max_gas_limit: z.number().default(5000000),
+    private_key: z.string().optional(),
+    payment_address: AddressSchema.optional(),
+    allowed_sim_errors: z.string().array().default([]),
+  })
+  .strict();
 
-const ConfigSnapshotSyncSchema = StrictObjectSchema({
-  sleep: DefaultNumberSchema(1),
-  batch_size: DefaultNumberSchema(500),
-  starting_sub_id: DefaultNumberSchema(0),
-  sync_period: DefaultNumberSchema(0.5),
-});
+const ConfigSnapshotSyncSchema = z
+  .object({
+    sleep: z.number().default(1),
+    batch_size: z.number().default(500),
+    starting_sub_id: z.number().default(0),
+    sync_period: z.number().default(0.5),
+  })
+  .strict();
 
 const ConfigChainSchema = z
   .object({
     enabled: z.boolean().default(false),
-    rpc_url: StringSchema.optional(),
-    trail_head_blocks: DefaultNumberSchema(1),
-    registry_address: AddressStringSchema.optional(),
+    rpc_url: z.string().optional(),
+    trail_head_blocks: z.number().default(1),
+    registry_address: AddressSchema.optional(),
     wallet: ConfigWalletSchema.optional(),
     snapshot_sync: ConfigSnapshotSyncSchema.default(
       ConfigSnapshotSyncSchema.parse({})
@@ -62,52 +62,60 @@ const ConfigChainSchema = z
     message: 'private_key must be defined when chain is enabled',
   });
 
-export const ConfigDockerSchema = StrictObjectSchema({
-  username: StringSchema,
-  password: StringSchema,
-});
+export const ConfigDockerSchema = z
+  .object({
+    username: z.string(),
+    password: z.string(),
+  })
+  .strict();
 
-export const InfernetContainerSchema = StrictObjectSchema({
-  id: StringSchema,
-  image: DefaultStringSchema(''),
-  url: DefaultStringSchema(''),
-  bearer: DefaultStringSchema(''),
-  port: DefaultNumberSchema(3000),
-  external: DefaultBooleanSchema(true),
-  gpu: DefaultBooleanSchema(false),
-  accepted_payments: z.object({}).catchall(NumberSchema).default({}),
-  allowed_ips: StringSchema.array().default([]),
-  allowed_addresses: StringSchema.array().default([]),
-  allowed_delegate_addresses: StringSchema.array().default([]),
-  description: DefaultStringSchema(''),
-  command: DefaultStringSchema(''),
-  env: z.object({}).default({}),
-  generates_proofs: DefaultBooleanSchema(false),
-  volumes: StringSchema.array().default([]),
-});
+export const InfernetContainerSchema = z
+  .object({
+    id: z.string(),
+    image: z.string().default(''),
+    url: z.string().default(''),
+    bearer: z.string().default(''),
+    port: z.number().default(3000),
+    external: z.boolean().default(true),
+    gpu: z.boolean().default(false),
+    accepted_payments: z.object({}).catchall(z.number()).default({}),
+    allowed_ips: z.string().array().default([]),
+    allowed_addresses: z.string().array().default([]),
+    allowed_delegate_addresses: z.string().array().default([]),
+    description: z.string().default(''),
+    command: z.string().default(''),
+    env: z.object({}).default({}),
+    generates_proofs: z.boolean().default(false),
+    volumes: z.string().array().default([]),
+  })
+  .strict();
 
-const ConfigRedisSchema = StrictObjectSchema({
-  host: DefaultStringSchema('redis'),
-  port: DefaultNumberSchema(6379),
-});
+const ConfigRedisSchema = z
+  .object({
+    host: z.string().default('redis'),
+    port: z.number().default(6379),
+  })
+  .strict();
 
-const ConfigLogSchema = StrictObjectSchema({
-  path: DefaultStringSchema('infernet_node.log'),
-  max_file_size: DefaultNumberSchema(2 ** 30),
-  backup_count: DefaultNumberSchema(2),
-});
+const ConfigLogSchema = z
+  .object({
+    path: z.string().default('infernet_node.log'),
+    max_file_size: z.number().default(2 ** 30),
+    backup_count: z.number().default(2),
+  })
+  .strict();
 
 const ConfigSchema = z
   .object({
     containers: InfernetContainerSchema.array().default([]),
     chain: ConfigChainSchema,
     docker: ConfigDockerSchema.optional(),
-    forward_stats: DefaultBooleanSchema(true),
+    forward_stats: z.boolean().default(true),
     log: ConfigLogSchema.default(ConfigLogSchema.parse({})),
-    manage_containers: DefaultBooleanSchema(true),
+    manage_containers: z.boolean().default(true),
     redis: ConfigRedisSchema.default(ConfigRedisSchema.parse({})),
     server: ConfigServerSchema.default(ConfigServerSchema.parse({})),
-    startup_wait: DefaultNumberSchema(5),
+    startup_wait: z.number().default(5),
   })
   .refine(
     ({ manage_containers, containers }) =>
