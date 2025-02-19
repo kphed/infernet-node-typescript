@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { map } from 'lodash';
 import { InfernetContainerSchema, ConfigDockerSchema } from '../shared/config';
 import { AsyncTask } from '../shared/service';
-import dockerClient from '../docker/client';
 import { delay } from '../utils/helpers';
 
 export class ContainerManager extends AsyncTask {
@@ -17,7 +16,7 @@ export class ContainerManager extends AsyncTask {
     _bearer_mappings: z.object({}).catchall(z.string()),
     _startup_wait: z.number().default(60_000),
     _managed: z.boolean().default(true),
-    _containers: z.object({}),
+    _containers: z.object({}).catchall(z.any()),
   };
 
   static methodSchemas = {
@@ -134,7 +133,10 @@ export class ContainerManager extends AsyncTask {
     this.#containers = ContainerManager.fieldSchemas._containers.parse({});
 
     if (this.#managed)
-      this.client = dockerClient(credentials?.username, credentials?.password);
+      this.client = new Docker({
+        timeout: 60_000,
+        ...(this.#creds ? this.#creds : {}),
+      });
 
     console.debug('Initialized Container Manager', {
       port_mappings: this.#port_mappings,
@@ -442,7 +444,10 @@ export class ContainerManager extends AsyncTask {
             const container = this.client.getContainer(id);
             const containerDetails = await container.inspect();
 
-            this.#containers[id] = container;
+            this.#containers = ContainerManager.fieldSchemas._containers.parse({
+              ...this.#containers,
+              [id]: container,
+            });
 
             if (containerDetails.State.Status !== 'running')
               await container.start();
@@ -527,7 +532,11 @@ export class ContainerManager extends AsyncTask {
               await container.rename({ name: id });
               await container.start();
 
-              this.#containers[id] = container;
+              this.#containers =
+                ContainerManager.fieldSchemas._containers.parse({
+                  ...this.#containers,
+                  [id]: container,
+                });
 
               console.info(`Started new container '${id}' on port ${port}`);
             } else {
