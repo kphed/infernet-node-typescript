@@ -1,6 +1,7 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/44c4cc8acadd3c6904b74adaa595ac002ded0ebf/src/orchestration/docker.py.
 import Docker from 'dockerode';
 import { z } from 'zod';
+import { map } from 'lodash';
 import { InfernetContainerSchema, ConfigDockerSchema } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import dockerClient from '../docker/client';
@@ -57,6 +58,18 @@ export class ContainerManager extends AsyncTask {
         container: z.string(),
       },
       returns: z.string(),
+    },
+    setup: {
+      args: {
+        pruneContainers: z.boolean().default(false),
+      },
+      returns: z.promise(z.void()),
+    },
+    run_forever: {
+      returns: z.promise(z.void()),
+    },
+    stop: {
+      returns: z.promise(z.void()),
     },
   };
 
@@ -220,15 +233,12 @@ export class ContainerManager extends AsyncTask {
     );
   }
 
-  /**
-   * Setup orchestrator. If containers are managed:
-   * 1. Pulls images in parallel, if not already pulled.
-   * 2. Prunes any containers with conflicting IDs, if prune_containers is True.
-   * 3. Creates containers, if not already created.
-   * 4. Starts containers, if not already started.
-   * 5. Waits for startup_wait seconds for containers to start.
-   */
-  async setup(pruneContainers: boolean = false): Promise<void> {
+  // Set up orchestrator by optionally pruning containers, pulling images, and (re)starting containers.
+  async setup(
+    pruneContainers: z.infer<
+      typeof ContainerManager.methodSchemas.setup.args.pruneContainers
+    > = false
+  ): z.infer<typeof ContainerManager.methodSchemas.setup.returns> {
     if (!this.#managed) {
       console.log(
         'Skipping container manager setup, containers are not managed'
@@ -244,16 +254,17 @@ export class ContainerManager extends AsyncTask {
 
       await this.#run_containers();
 
-      console.info('Waiting for container startup', this.#startup_wait);
+      console.info('Waiting for container startup', {
+        seconds: this.#startup_wait / 1_000,
+      });
 
       await delay(this.#startup_wait);
 
-      console.info(
-        'Container manager setup complete',
-        await this.running_containers()
-      );
+      console.info('Container manager setup complete', {
+        running_containers: await this.running_containers(),
+      });
     } catch (err) {
-      console.error('Error setting up container manager', err);
+      console.error('Error setting up container manager', { error: err });
 
       throw new Error(
         'Container manager setup failed. Check logs for details.'
@@ -261,88 +272,73 @@ export class ContainerManager extends AsyncTask {
     }
   }
 
-  /**
-   * Lifecycle loop for container manager
-   * Continuously checks if any containers exited / crashed. When a container
-   * exits / crashes, logs the container ID as a warning and continues running.
-   * If no running containers remain, logs an error and exits.
-   */
-  run_forever(): void {
-    let runningContainers;
+  // Performs ongoing checks on containers, and executes logic depending on their status.
+  async run_forever(): z.infer<
+    typeof ContainerManager.methodSchemas.run_forever.returns
+  > {
+    let runningContainers = await this.running_containers();
 
-    this.running_containers()
-      .then((_runningContainers) => {
-        runningContainers = _runningContainers;
+    // Continuously checks if any running containers were stopped or started since the previous check.
+    const monitorContainers = async () => {
+      if (this.shutdown) return;
 
-        const monitorContainers = () => {
-          if (this.shutdown) return;
+      const currentContainers = await this.running_containers();
 
-          this.running_containers()
-            .then((currentContainers) => {
-              console.log(`Running containers: ${currentContainers}`);
+      console.log(`Running containers: ${currentContainers}`);
 
-              const currentContainerLength = currentContainers.length;
-              const runningContainerLength = runningContainers.length;
+      if (currentContainers.length < runningContainers.length) {
+        console.warn(
+          'Container(s) failed / exited / crashed',
+          // Filtered list of containers that are no longer running.
+          runningContainers.filter(
+            (runningContainer) => !currentContainers.includes(runningContainer)
+          )
+        );
+      } else if (currentContainers.length > runningContainers.length) {
+        console.log(
+          'Container(s) back up',
+          // Filtered list of containers that have been recently start up.
+          currentContainers.filter(
+            (currentContainer) => !runningContainers.includes(currentContainer)
+          )
+        );
+      }
 
-              if (currentContainerLength < runningContainerLength) {
-                const failedContainers = runningContainers.filter(
-                  (runningContainer) =>
-                    !currentContainers.includes(runningContainer)
-                );
+      runningContainers = currentContainers;
 
-                console.log(
-                  'Container(s) failed / exited / crashed',
-                  failedContainers
-                );
-              } else if (currentContainerLength > runningContainerLength) {
-                const restartedContainers = currentContainers.filter(
-                  (currentContainer) =>
-                    !runningContainers.includes(currentContainer)
-                );
+      // Rerun check in 10 seconds.
+      setTimeout(monitorContainers, 10_000);
+    };
 
-                console.log('Container(s) back up', restartedContainers);
-              }
-
-              runningContainers = currentContainers;
-
-              setTimeout(monitorContainers, 10_000);
-            })
-            .catch((err) => {
-              throw err;
-            });
-        };
-
-        return monitorContainers();
-      })
-      .catch((err) => {
-        throw err;
-      });
+    return ContainerManager.methodSchemas.setup.returns.parse(
+      monitorContainers()
+    );
   }
 
-  /**
-   * Force stops all containers.
-   */
-  async stop(): Promise<void> {
+  // Attempts to stop all configured containers.
+  async stop(): z.infer<typeof ContainerManager.methodSchemas.stop.returns> {
     this.shutdown = true;
 
-    if (this.#managed) {
-      console.log('Stopping containers');
+    if (!this.#managed) return;
 
-      await Promise.all(
-        Object.keys(this.#containers).map(async (containerKey) => {
+    console.log('Stopping containers');
+
+    return ContainerManager.methodSchemas.setup.returns.parse(
+      Promise.all(
+        map(this.#containers, async (container, containerId) => {
           try {
-            await this.#containers[containerKey].stop({
+            await container.stop({
               abortSignal: AbortSignal.timeout(DEFAULT_CONTAINER_STOP_TIMEOUT),
             });
           } catch (err) {
-            console.error(`Error stopping container ${containerKey}`, err);
+            console.error(`Error stopping container ${containerId}`, {
+              error: err,
+            });
           }
         })
-      );
-    }
+      )
+    );
   }
-
-  cleanup(): void {}
 
   /**
    * Pulls all managed images in parallel.
@@ -527,4 +523,6 @@ export class ContainerManager extends AsyncTask {
       throw err;
     }
   }
+
+  cleanup(): void {}
 }
