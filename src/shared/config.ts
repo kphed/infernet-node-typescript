@@ -84,7 +84,7 @@ export const InfernetContainerSchema = z
     allowed_delegate_addresses: z.string().array().default([]),
     description: z.string().default(''),
     command: z.string().default(''),
-    env: z.object({}).default({}),
+    env: z.object({}).catchall(z.string()).default({}),
     generates_proofs: z.boolean().default(false),
     volumes: z.string().array().default([]),
   })
