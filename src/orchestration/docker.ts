@@ -14,7 +14,7 @@ export class ContainerManager extends AsyncTask {
     _configs: InfernetContainerSchema.array(),
     _creds: ConfigDockerSchema.optional(),
     _images: z.string().array(),
-    _port_mappings: z.object({}).catchall(z.number()),
+    _port_mappings: z.object({}).catchall(z.number().positive()),
     _url_mappings: z.object({}).catchall(z.string()),
     _bearer_mappings: z.object({}).catchall(z.string()),
     _startup_wait: z.number().default(60_000),
@@ -24,7 +24,7 @@ export class ContainerManager extends AsyncTask {
 
   static methodSchemas = {
     port_mappings: {
-      returns: z.object({}).catchall(z.number()),
+      returns: this.fieldSchemas._port_mappings,
     },
     running_containers: {
       returns: z.string().array(),
@@ -39,6 +39,24 @@ export class ContainerManager extends AsyncTask {
         })
         .strict()
         .array(),
+    },
+    get_port: {
+      args: {
+        container: z.string(),
+      },
+      returns: z.number().positive(),
+    },
+    get_url: {
+      args: {
+        container: z.string(),
+      },
+      returns: z.string().url(),
+    },
+    get_bearer: {
+      args: {
+        container: z.string(),
+      },
+      returns: z.string(),
     },
   };
 
@@ -170,18 +188,36 @@ export class ContainerManager extends AsyncTask {
   }
 
   // Returns port for given container.
-  get_port(container: string): number {
-    return this.#port_mappings[container];
+  get_port(
+    container: z.infer<
+      typeof ContainerManager.methodSchemas.get_port.args.container
+    >
+  ): z.infer<typeof ContainerManager.methodSchemas.get_port.returns> {
+    return ContainerManager.methodSchemas.get_port.returns.parse(
+      this.#port_mappings[container]
+    );
   }
 
   // Returns url for given container.
-  get_url(container: string): string {
-    return this.#url_mappings[container];
+  get_url(
+    container: z.infer<
+      typeof ContainerManager.methodSchemas.get_url.args.container
+    >
+  ): z.infer<typeof ContainerManager.methodSchemas.get_url.returns> {
+    return ContainerManager.methodSchemas.get_url.returns.parse(
+      this.#url_mappings[container]
+    );
   }
 
   // Returns bearer auth token for given container.
-  get_bearer(container: string): string {
-    return this.#bearer_mappings[container];
+  get_bearer(
+    container: z.infer<
+      typeof ContainerManager.methodSchemas.get_bearer.args.container
+    >
+  ): z.infer<typeof ContainerManager.methodSchemas.get_bearer.returns> {
+    return ContainerManager.methodSchemas.get_bearer.returns.parse(
+      this.#bearer_mappings[container]
+    );
   }
 
   /**
