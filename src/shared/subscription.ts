@@ -1,7 +1,7 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/7418dff0b55ba85c27b8764529f5e5f0aa9cbdb3/src/shared/subscription.py.
 import { z } from 'zod';
-import { Address, Hex, getAddress, hashTypedData } from 'viem';
-import { ChecksumAddressSchema, ByteStringSchema } from './schemas';
+import { getAddress, hashTypedData } from 'viem';
+import { ChecksumAddressSchema, HexSchema } from './schemas';
 import { ContainerLookup } from '../chain/containerLookup';
 import { UINT32_MAX, ZERO_ADDRESS } from '../utils/constants';
 import { add0x, getUnixTimestamp } from '../utils/helpers';
@@ -15,7 +15,7 @@ export class Subscription {
     _period: z.number(),
     _frequency: z.number(),
     _redundancy: z.number(),
-    _containers_hash: ByteStringSchema,
+    _containers_hash: HexSchema,
     _lazy: z.boolean(),
     _verifier: ChecksumAddressSchema,
     _payment_amount: z.number(),
@@ -51,7 +51,7 @@ export class Subscription {
       returns: z.string().array(),
     },
     containers_hash: {
-      returns: ByteStringSchema,
+      returns: HexSchema,
     },
     payment_amount: {
       returns: z.number(),
@@ -76,6 +76,55 @@ export class Subscription {
     },
     completed: {
       returns: z.boolean(),
+    },
+    get_response_count: {
+      args: {
+        interval: z.number(),
+      },
+      returns: z.number(),
+    },
+    set_response_count: {
+      args: {
+        interval: z.number(),
+        count: z.number(),
+      },
+      returns: z.void(),
+    },
+    get_node_replied: {
+      args: {
+        interval: z.number(),
+      },
+      returns: z.boolean(),
+    },
+    set_node_replied: {
+      args: {
+        interval: z.number(),
+      },
+      returns: z.void(),
+    },
+    get_delegate_subscription_typed_data: {
+      args: {
+        nonce: z.number(),
+        expiry: z.number(),
+        chain_id: z.number(),
+        verifying_contract: ChecksumAddressSchema,
+      },
+      returns: HexSchema,
+    },
+    get_tx_inputs: {
+      returns: z.tuple([
+        z.string(),
+        z.number(),
+        z.number(),
+        z.number(),
+        z.number(),
+        HexSchema,
+        z.boolean(),
+        z.string(),
+        z.number(),
+        z.string(),
+        z.string(),
+      ]),
     },
   };
 
@@ -280,22 +329,26 @@ export class Subscription {
     );
   }
 
-  /**
-   * Returns response count by subscription interval.
-   */
-  get_response_count(interval: number): number {
-    const response = this.#responses[interval];
-
-    // If interval is not tracked, return 0.
-    if (!response) return 0;
-
-    return response;
+  // Returns response count by subscription interval.
+  get_response_count(
+    interval: z.infer<
+      typeof Subscription.methodSchemas.get_response_count.args.interval
+    >
+  ): z.infer<typeof Subscription.methodSchemas.get_response_count.returns> {
+    return Subscription.methodSchemas.get_response_count.returns.parse(
+      this.#responses[interval] ?? 0
+    );
   }
 
-  /**
-   * Sets response count for a subscription interval.
-   */
-  set_response_count(interval: number, count: number): void {
+  // Sets response count for a subscription interval.
+  set_response_count(
+    interval: z.infer<
+      typeof Subscription.methodSchemas.set_response_count.args.interval
+    >,
+    count: z.infer<
+      typeof Subscription.methodSchemas.set_response_count.args.count
+    >
+  ): z.infer<typeof Subscription.methodSchemas.set_response_count.returns> {
     // Throw if updating response count for inactive subscription.
     if (!this.active)
       throw new Error('Cannot update response count for inactive subscription');
@@ -307,30 +360,43 @@ export class Subscription {
     this.#responses[interval] = count;
   }
 
-  /**
-   * Returns whether local node has responded in interval.
-   */
-  get_node_replied(interval: number): boolean {
-    // True if node has replied in interval, else False.
-    return !!this.#node_replied[interval];
+  // Returns whether local node has responded within the interval.
+  get_node_replied(
+    interval: z.infer<
+      typeof Subscription.methodSchemas.get_node_replied.args.interval
+    >
+  ): z.infer<typeof Subscription.methodSchemas.get_node_replied.returns> {
+    return Subscription.methodSchemas.get_node_replied.returns.parse(
+      !!this.#node_replied[interval]
+    );
   }
 
-  /**
-   * Sets local node as having responded in interval.
-   */
-  set_node_replied(interval: number): void {
+  // Sets a local node as having responded within the interval.
+  set_node_replied(
+    interval: z.infer<
+      typeof Subscription.methodSchemas.set_node_replied.args.interval
+    >
+  ): z.infer<typeof Subscription.methodSchemas.set_node_replied.returns> {
     this.#node_replied[interval] = true;
   }
 
-  /**
-   * Generates EIP-712 typed data to sign for DelegateeSubscription.
-   */
+  // Generates EIP-712 typed data to sign for `DelegateeSubscription`.
   get_delegate_subscription_typed_data(
-    nonce: number,
-    expiry: number,
-    chain_id: number,
-    verifying_contract: Address
-  ): Hex {
+    nonce: z.infer<
+      typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.args.nonce
+    >,
+    expiry: z.infer<
+      typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.args.expiry
+    >,
+    chain_id: z.infer<
+      typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.args.chain_id
+    >,
+    verifying_contract: z.infer<
+      typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.args.verifying_contract
+    >
+  ): z.infer<
+    typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.returns
+  > {
     return hashTypedData({
       domain: {
         name: 'InfernetCoordinator',
@@ -374,7 +440,7 @@ export class Subscription {
           period: this.#period,
           frequency: this.#frequency,
           redundancy: this.#redundancy,
-          containerId: this.containers_hash as `0x${string}`,
+          containerId: this.containers_hash,
           lazy: this.#lazy,
           verifier: this.verifier,
           paymentAmount: BigInt(this.payment_amount),
@@ -385,22 +451,10 @@ export class Subscription {
     });
   }
 
-  /**
-   * Returns subscription parameters as raw array input for generated txs.
-   */
-  get_tx_inputs(): [
-    string,
-    number,
-    number,
-    number,
-    number,
-    string,
-    boolean,
-    string,
-    number,
-    string,
-    string
-  ] {
+  // Returns subscription parameters as raw array input for generated txs.
+  get_tx_inputs(): z.infer<
+    typeof Subscription.methodSchemas.get_tx_inputs.returns
+  > {
     return [
       this.owner,
       this.#active_at,
@@ -418,35 +472,77 @@ export class Subscription {
 }
 
 export class SerializedSubscription {
-  constructor(
-    public owner: Address,
-    public active_at: number,
-    public period: number,
-    public frequency: number,
-    public redundancy: number,
-    public containers: string,
-    public lazy: boolean,
-    public verifier: string,
-    public payment_amount: number,
-    public payment_token: string,
-    public wallet: string
-  ) {}
+  static methodSchemas = {
+    deserialize: {
+      args: {
+        container_lookup: Subscription.fieldSchemas._container_lookup,
+      },
+      returns: z.instanceof(Subscription),
+    },
+  };
 
-  deserialize(container_lookup: ContainerLookup): Subscription {
-    return new Subscription(
-      -1,
-      container_lookup,
-      this.owner,
-      this.active_at,
-      this.period,
-      this.frequency,
-      this.redundancy,
-      this.containers,
-      this.lazy,
-      this.verifier,
-      this.payment_amount,
-      this.payment_token,
-      this.wallet
+  owner: z.infer<typeof Subscription.fieldSchemas._owner>;
+  active_at: z.infer<typeof Subscription.fieldSchemas._active_at>;
+  period: z.infer<typeof Subscription.fieldSchemas._period>;
+  frequency: z.infer<typeof Subscription.fieldSchemas._frequency>;
+  redundancy: z.infer<typeof Subscription.fieldSchemas._redundancy>;
+  containers: z.infer<typeof Subscription.fieldSchemas._containers_hash>;
+  lazy: z.infer<typeof Subscription.fieldSchemas._lazy>;
+  verifier: z.infer<typeof Subscription.fieldSchemas._verifier>;
+  payment_amount: z.infer<typeof Subscription.fieldSchemas._payment_amount>;
+  payment_token: z.infer<typeof Subscription.fieldSchemas._payment_token>;
+  wallet: z.infer<typeof Subscription.fieldSchemas._wallet>;
+
+  constructor(
+    owner,
+    active_at,
+    period,
+    frequency,
+    redundancy,
+    containers,
+    lazy,
+    verifier,
+    payment_amount,
+    payment_token,
+    wallet
+  ) {
+    this.owner = Subscription.fieldSchemas._owner.parse(owner);
+    this.active_at = Subscription.fieldSchemas._active_at.parse(active_at);
+    this.period = Subscription.fieldSchemas._period.parse(period);
+    this.frequency = Subscription.fieldSchemas._frequency.parse(frequency);
+    this.redundancy = Subscription.fieldSchemas._redundancy.parse(redundancy);
+    this.containers =
+      Subscription.fieldSchemas._containers_hash.parse(containers);
+    this.lazy = Subscription.fieldSchemas._lazy.parse(lazy);
+    this.verifier = Subscription.fieldSchemas._verifier.parse(verifier);
+    this.payment_amount =
+      Subscription.fieldSchemas._payment_amount.parse(payment_amount);
+    this.payment_token =
+      Subscription.fieldSchemas._payment_token.parse(payment_token);
+    this.wallet = Subscription.fieldSchemas._wallet.parse(wallet);
+  }
+
+  deserialize(
+    container_lookup: z.infer<
+      typeof SerializedSubscription.methodSchemas.deserialize.args.container_lookup
+    >
+  ): z.infer<typeof SerializedSubscription.methodSchemas.deserialize.returns> {
+    return SerializedSubscription.methodSchemas.deserialize.returns.parse(
+      new Subscription(
+        -1,
+        container_lookup,
+        this.owner,
+        this.active_at,
+        this.period,
+        this.frequency,
+        this.redundancy,
+        this.containers,
+        this.lazy,
+        this.verifier,
+        this.payment_amount,
+        this.payment_token,
+        this.wallet
+      )
     );
   }
 }
