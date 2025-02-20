@@ -11,6 +11,7 @@ import {
   recoverAddress,
   SimulateContractReturnType,
 } from 'viem';
+import { z } from 'zod';
 import { RPC } from './rpc';
 import {
   COORDINATOR_ABI,
@@ -27,6 +28,20 @@ enum CoordinatorEvent {
   SubscriptionFulfilled = 'SubscriptionFulfilled(uint32,address)',
 }
 
+export const CoordinatorSignatureParamsSchema = z.object({
+  nonce: z.number(),
+  expiry: z.number(),
+  v: z.number(),
+  r: z.union([
+    z.number(),
+    z.string().refine((str) => str.substring(0, 2) === '0x'),
+  ]),
+  s: z.union([
+    z.number(),
+    z.string().refine((str) => str.substring(0, 2) === '0x'),
+  ]),
+});
+
 export interface CoordinatorDeliveryParams {
   subscription: Subscription;
   interval: number;
@@ -36,13 +51,9 @@ export interface CoordinatorDeliveryParams {
   node_wallet: Address;
 }
 
-export interface CoordinatorSignatureParams {
-  nonce: number;
-  expiry: number;
-  v: number;
-  r: number | Hex;
-  s: number | Hex;
-}
+export type CoordinatorSignatureParams = z.infer<
+  typeof CoordinatorSignatureParamsSchema
+>;
 
 interface CoordinatorTxParams {
   nonce: number;

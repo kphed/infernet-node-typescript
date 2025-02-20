@@ -3,7 +3,10 @@ import { BlockNumber } from 'viem';
 import { Coordinator, ChainProcessor, Reader, Registry, RPC } from './index';
 import { Guardian } from '../orchestration';
 import { ConfigSnapshotSync } from '../shared/config';
-import { GuardianError, SubscriptionCreatedMessage } from '../shared/message';
+import {
+  GuardianError,
+  SubscriptionCreatedMessageSchema,
+} from '../shared/message';
 import { AsyncTask } from '../shared/service';
 import { Subscription } from '../shared/subscription';
 import { delay } from '../utils/helpers';
@@ -155,7 +158,7 @@ export class ChainListener extends AsyncTask {
 
     for (let i = 0; i < subscriptions.length; i++) {
       const subscription = subscriptions[i];
-      const msg = new SubscriptionCreatedMessage(subscription);
+      const msg = SubscriptionCreatedMessageSchema.parse(subscription);
       const filtered = this.#guardian.process_message(msg);
 
       if (filtered instanceof GuardianError) {

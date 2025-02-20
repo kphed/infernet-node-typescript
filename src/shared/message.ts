@@ -1,83 +1,104 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/cf254b9c9601883bd3a716b41028f686cd04b163/src/shared/message.py.
-import { cloneDeep } from 'lodash';
-import { CoordinatorSignatureParams } from '../chain/coordinator';
+import { z } from 'zod';
+import { CoordinatorSignatureParamsSchema } from '../chain/coordinator';
 import { SerializedSubscription, Subscription } from './subscription';
 
-// Message types.
 export enum MessageType {
   OffchainJob = 0,
   DelegatedSubscription = 1,
   SubscriptionCreated = 2,
 }
 
-// Base off-chain message.
-export interface BaseMessage {
-  id: string;
-  ip: string;
-}
+export const MessageTypeSchema = z.nativeEnum(MessageType);
 
-// Off-chain orginating, off-chain delivery job message.
-export interface OffchainJobMessage extends BaseMessage {
-  containers: string[];
-  data: { [key: string]: any };
-  type: MessageType.OffchainJob;
-  requires_proof?: boolean;
-}
+export const BaseMessageSchema = z
+  .object({
+    id: z.string(),
+    ip: z.string(),
+  })
+  .strict();
 
-// Off-chain originating, on-chain delivery message.
-export interface DelegatedSubscriptionMessage extends BaseMessage {
-  subscription: SerializedSubscription;
-  signature: CoordinatorSignatureParams;
-  data: {
-    [key: string]: any;
-  };
-  type: MessageType.DelegatedSubscription;
-  requires_proof?: boolean;
-}
+export const OffchainJobMessageSchema = BaseMessageSchema.extend({
+  containers: z.string().array(),
+  data: z.object({}).catchall(z.any()),
+  type: z.literal(MessageType.OffchainJob),
+  requires_proof: z.boolean().optional().default(false),
+}).strict();
 
-// On-chain subscription creation event.
-export class SubscriptionCreatedMessage {
-  subscription: Subscription;
-  type = MessageType.SubscriptionCreated;
-  requires_proof: boolean;
+export const DelegatedSubscriptionMessageSchema = BaseMessageSchema.extend({
+  subscription: z.instanceof(SerializedSubscription),
+  signature: CoordinatorSignatureParamsSchema,
+  data: z.object({}).catchall(z.any()),
+  type: z.literal(MessageType.DelegatedSubscription),
+  requires_proof: z.boolean().optional().default(false),
+}).strict();
 
-  constructor(_subscription: Subscription, _requires_proof: boolean = false) {
-    this.subscription = _subscription;
-    this.requires_proof = _requires_proof;
-  }
-}
+export const SubscriptionCreatedMessageSchema = z
+  .object({
+    subscription: z.instanceof(Subscription),
+    type: z.literal(MessageType.SubscriptionCreated),
+    requires_proof: z.boolean().optional().default(false),
+  })
+  .strict();
 
-// Type alias for off-chain originating message.
-export type OffchainMessage = OffchainJobMessage | DelegatedSubscriptionMessage;
+export const OffchainMessageSchema = z.union([
+  OffchainJobMessageSchema,
+  DelegatedSubscriptionMessageSchema,
+]);
 
-// Type alias for coordinator event messages.
-export type CoordinatorMessage = SubscriptionCreatedMessage;
+export const CoordinatorMessageSchema = SubscriptionCreatedMessageSchema;
 
-// Type alias for filtered event message.
-export type FilteredMessage = OffchainMessage | CoordinatorMessage;
+export const FilteredMessageSchema = z.union([
+  OffchainMessageSchema,
+  CoordinatorMessageSchema,
+]);
 
-// Type alias for pre-filtered event messages.
-export type PrefilterMessage = OffchainMessage | CoordinatorMessage;
+export const PrefilterMessageSchema = z.union([
+  OffchainMessageSchema,
+  CoordinatorMessageSchema,
+]);
 
-// Type alias for on-chain processed messages.
-export type OnchainMessage = CoordinatorMessage | DelegatedSubscriptionMessage;
+export const OnchainMessageSchema = z.union([
+  CoordinatorMessageSchema,
+  DelegatedSubscriptionMessageSchema,
+]);
+
+export type BaseMessage = z.infer<typeof BaseMessageSchema>;
+
+export type OffchainJobMessage = z.infer<typeof OffchainJobMessageSchema>;
+
+export type DelegatedSubscriptionMessage = z.infer<
+  typeof DelegatedSubscriptionMessageSchema
+>;
+
+export type SubscriptionCreatedMessage = z.infer<
+  typeof SubscriptionCreatedMessageSchema
+>;
+
+export type OffchainMessage = z.infer<typeof OffchainMessageSchema>;
+
+export type CoordinatorMessage = z.infer<typeof CoordinatorMessageSchema>;
+
+export type FilteredMessage = z.infer<typeof FilteredMessageSchema>;
+
+export type PrefilterMessage = z.infer<typeof PrefilterMessageSchema>;
+
+export type OnchainMessage = z.infer<typeof OnchainMessageSchema>;
 
 export class GuardianError {
-  message: PrefilterMessage;
-  error: string;
-  params: {
-    [key: string]: any;
+  static fieldSchemas = {
+    message: PrefilterMessageSchema,
+    error: z.string(),
+    params: z.object({}).catchall(z.any()),
   };
 
-  constructor(
-    _message: PrefilterMessage,
-    _error: string,
-    _params: {
-      [key: string]: any;
-    }
-  ) {
-    this.message = _message;
-    this.error = _error;
-    this.params = cloneDeep(_params);
+  message: z.infer<typeof GuardianError.fieldSchemas.message>;
+  error: z.infer<typeof GuardianError.fieldSchemas.error>;
+  params: z.infer<typeof GuardianError.fieldSchemas.params>;
+
+  constructor(_message, _error, _params) {
+    this.message = GuardianError.fieldSchemas.message.parse(_message);
+    this.error = GuardianError.fieldSchemas.error.parse(_error);
+    this.params = GuardianError.fieldSchemas.params.parse(_params);
   }
 }
