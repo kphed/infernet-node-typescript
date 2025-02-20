@@ -1,60 +1,85 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/7418dff0b55ba85c27b8764529f5e5f0aa9cbdb3/src/shared/subscription.py.
+import { z } from 'zod';
 import { Address, Hex, getAddress, hashTypedData } from 'viem';
+import { ChecksumAddressSchema, ByteStringSchema } from './schemas';
 import { ContainerLookup } from '../chain/containerLookup';
 import { UINT32_MAX, ZERO_ADDRESS } from '../utils/constants';
 import { add0x, getUnixTimestamp } from '../utils/helpers';
 
 export class Subscription {
-  id: number;
-  payment_amount: number;
-  payment_token: Address;
-  verifier: Address;
-  owner: Address;
-  containers_hash: `0x${string}`;
-  wallet: Address;
-  active_at: number;
-  #container_lookup: ContainerLookup;
-  #period: number;
-  #frequency: number;
-  #redundancy: number;
-  #lazy: boolean;
-  #responses: {
-    [key: number]: number;
-  };
-  #node_replied: {
-    [key: number]: boolean;
+  static fieldSchemas = {
+    id: z.number(),
+    payment_amount: z.number(),
+    payment_token: ChecksumAddressSchema,
+    verifier: ChecksumAddressSchema,
+    owner: ChecksumAddressSchema,
+    containers_hash: ByteStringSchema,
+    wallet: ChecksumAddressSchema,
+    active_at: z.number(),
+    _container_lookup: z.instanceof(ContainerLookup),
+    _period: z.number(),
+    _frequency: z.number(),
+    _redundancy: z.number(),
+    _lazy: z.boolean(),
+    _responses: z.object({}).catchall(z.number()),
+    _node_replied: z.object({}).catchall(z.boolean()),
   };
 
+  id: z.infer<typeof Subscription.fieldSchemas.id>;
+  payment_amount: z.infer<typeof Subscription.fieldSchemas.payment_amount>;
+  payment_token: z.infer<typeof Subscription.fieldSchemas.payment_token>;
+  verifier: z.infer<typeof Subscription.fieldSchemas.verifier>;
+  owner: z.infer<typeof Subscription.fieldSchemas.owner>;
+  containers_hash: z.infer<typeof Subscription.fieldSchemas.containers_hash>;
+  wallet: z.infer<typeof Subscription.fieldSchemas.wallet>;
+  active_at: z.infer<typeof Subscription.fieldSchemas.active_at>;
+  #container_lookup: z.infer<
+    typeof Subscription.fieldSchemas._container_lookup
+  >;
+  #period: z.infer<typeof Subscription.fieldSchemas._period>;
+  #frequency: z.infer<typeof Subscription.fieldSchemas._frequency>;
+  #redundancy: z.infer<typeof Subscription.fieldSchemas._redundancy>;
+  #lazy: z.infer<typeof Subscription.fieldSchemas._lazy>;
+  #responses: z.infer<typeof Subscription.fieldSchemas._responses>;
+  #node_replied: z.infer<typeof Subscription.fieldSchemas._node_replied>;
+
   constructor(
-    id: number,
-    container_lookup: ContainerLookup,
-    owner: Address,
-    active_at: number,
-    period: number,
-    frequency: number,
-    redundancy: number,
-    containers_hash: string,
-    lazy: boolean,
-    verifier: string,
-    payment_amount: number,
-    payment_token: string,
-    wallet: string
+    id,
+    container_lookup,
+    owner,
+    active_at,
+    period,
+    frequency,
+    redundancy,
+    containers_hash,
+    lazy,
+    verifier,
+    payment_amount,
+    payment_token,
+    wallet
   ) {
-    this.id = id;
-    this.payment_amount = payment_amount;
-    this.payment_token = getAddress(payment_token);
-    this.verifier = getAddress(verifier);
-    this.owner = getAddress(owner);
-    this.containers_hash = add0x(containers_hash);
-    this.wallet = getAddress(wallet);
-    this.active_at = active_at;
-    this.#container_lookup = container_lookup;
-    this.#period = period;
-    this.#frequency = frequency;
-    this.#redundancy = redundancy;
-    this.#lazy = lazy;
-    this.#responses = {};
-    this.#node_replied = {};
+    this.id = Subscription.fieldSchemas.id.parse(id);
+    this.payment_amount =
+      Subscription.fieldSchemas.payment_amount.parse(payment_amount);
+    this.payment_token =
+      Subscription.fieldSchemas.payment_token.parse(payment_token);
+    this.verifier = Subscription.fieldSchemas.verifier.parse(
+      getAddress(verifier)
+    );
+    this.owner = Subscription.fieldSchemas.owner.parse(getAddress(owner));
+    this.containers_hash = Subscription.fieldSchemas.containers_hash.parse(
+      add0x(containers_hash)
+    );
+    this.wallet = Subscription.fieldSchemas.wallet.parse(getAddress(wallet));
+    this.active_at = Subscription.fieldSchemas.active_at.parse(active_at);
+    this.#container_lookup =
+      Subscription.fieldSchemas._container_lookup.parse(container_lookup);
+    this.#period = Subscription.fieldSchemas._period.parse(period);
+    this.#frequency = Subscription.fieldSchemas._frequency.parse(frequency);
+    this.#redundancy = Subscription.fieldSchemas._redundancy.parse(redundancy);
+    this.#lazy = Subscription.fieldSchemas._lazy.parse(lazy);
+    this.#responses = Subscription.fieldSchemas._responses.parse({});
+    this.#node_replied = Subscription.fieldSchemas._node_replied.parse({});
   }
 
   /**
@@ -238,7 +263,7 @@ export class Subscription {
           period: this.#period,
           frequency: this.#frequency,
           redundancy: this.#redundancy,
-          containerId: this.containers_hash,
+          containerId: this.containers_hash as `0x${string}`,
           lazy: this.#lazy,
           verifier: this.verifier,
           paymentAmount: BigInt(this.payment_amount),
