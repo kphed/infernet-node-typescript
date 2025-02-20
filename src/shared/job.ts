@@ -1,47 +1,81 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/cf254b9c9601883bd3a716b41028f686cd04b163/src/shared/job.py.
+import { z } from 'zod';
+
 export enum JobLocation {
   ONCHAIN = 0,
   OFFCHAIN = 1,
   STREAM = 2,
 }
 
-// Container source, destination, and data.
-export interface ContainerInput {
-  source: JobLocation.ONCHAIN | JobLocation.OFFCHAIN;
-  destination: JobLocation;
-  data: any;
-  requires_proof: boolean;
-}
+export const JobLocationSchema = z.nativeEnum(JobLocation);
 
-// Container output.
-export interface ContainerOutput {
-  container: string;
-  output: {
-    [key: string]: any;
-  };
-}
+export const ContainerInputSchema = z
+  .object({
+    source: z.union([
+      z.literal(JobLocation.ONCHAIN),
+      z.literal(JobLocation.OFFCHAIN),
+    ]),
+    destination: JobLocationSchema,
+    data: z.any(),
+    requires_proof: z.boolean(),
+  })
+  .strict();
 
-// Container error.
-export interface ContainerError {
-  container: string;
-  error: string;
-}
+export const ContainerOutputSchema = z
+  .object({
+    container: z.string(),
+    output: z.object({}).catchall(z.any()),
+  })
+  .strict();
 
-export type ContainerResult = ContainerError | ContainerOutput;
+export const ContainerErrorSchema = z
+  .object({
+    container: z.string(),
+    error: z.string(),
+  })
+  .strict();
 
-// Job source, destination, and data.
-export interface JobInput {
-  source: JobLocation.ONCHAIN | JobLocation.OFFCHAIN;
-  destination: JobLocation;
-  data: any;
-}
+export const ContainerResultSchema = z.union([
+  ContainerErrorSchema,
+  ContainerOutputSchema,
+]);
 
-export type JobStatus = 'running' | 'success' | 'failed';
+export const JobInputSchema = z
+  .object({
+    source: z.union([
+      z.literal(JobLocation.ONCHAIN),
+      z.literal(JobLocation.OFFCHAIN),
+    ]),
+    destination: JobLocationSchema,
+    data: z.any(),
+  })
+  .strict();
 
-// Job result.
-export interface JobResult {
-  id: string;
-  status: JobStatus;
-  intermediate_results: ContainerResult[];
-  result?: ContainerResult;
-}
+export const JobStatusSchema = z.union([
+  z.literal('running'),
+  z.literal('success'),
+  z.literal('failed'),
+]);
+
+export const JobResultSchema = z
+  .object({
+    id: z.string(),
+    status: JobStatusSchema,
+    intermediate_results: ContainerResultSchema.array(),
+    result: ContainerResultSchema.optional(),
+  })
+  .strict();
+
+export type ContainerInput = z.infer<typeof ContainerInputSchema>;
+
+export type ContainerOutput = z.infer<typeof ContainerOutputSchema>;
+
+export type ContainerError = z.infer<typeof ContainerErrorSchema>;
+
+export type ContainerResult = z.infer<typeof ContainerResultSchema>;
+
+export type JobInput = z.infer<typeof JobInputSchema>;
+
+export type JobStatus = z.infer<typeof JobStatusSchema>;
+
+export type JobResult = z.infer<typeof JobResultSchema>;
