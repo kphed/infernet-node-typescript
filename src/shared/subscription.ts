@@ -23,6 +23,7 @@ export class Subscription {
     _wallet: ChecksumAddressSchema,
     _responses: z.object({}).catchall(z.number()),
     _node_replied: z.object({}).catchall(z.boolean()),
+    _cached_delegate_subscription_typed_data: z.object({}).catchall(z.any()),
   };
 
   static methodSchemas = {
@@ -145,6 +146,9 @@ export class Subscription {
   #wallet: z.infer<typeof Subscription.fieldSchemas._wallet>;
   #responses: z.infer<typeof Subscription.fieldSchemas._responses>;
   #node_replied: z.infer<typeof Subscription.fieldSchemas._node_replied>;
+  #cached_delegate_subscription_typed_data: z.infer<
+    typeof Subscription.fieldSchemas._cached_delegate_subscription_typed_data
+  >;
 
   constructor(
     id,
@@ -183,6 +187,10 @@ export class Subscription {
     this.#wallet = Subscription.fieldSchemas._wallet.parse(getAddress(wallet));
     this.#responses = Subscription.fieldSchemas._responses.parse({});
     this.#node_replied = Subscription.fieldSchemas._node_replied.parse({});
+    this.#cached_delegate_subscription_typed_data =
+      Subscription.fieldSchemas._cached_delegate_subscription_typed_data.parse(
+        {}
+      );
   }
 
   // Returns the time at which the subscription became active.
@@ -397,65 +405,78 @@ export class Subscription {
   ): z.infer<
     typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.returns
   > {
-    return hashTypedData({
-      domain: {
-        name: 'InfernetCoordinator',
-        version: '1',
-        chainId: BigInt(chain_id),
-        verifyingContract: verifying_contract,
-      },
-      types: {
-        EIP712Domain: [
-          { name: 'name', type: 'string' },
-          { name: 'version', type: 'string' },
-          { name: 'chainId', type: 'uint256' },
-          { name: 'verifyingContract', type: 'address' },
-        ],
-        DelegateSubscription: [
-          { name: 'nonce', type: 'uint32' },
-          { name: 'expiry', type: 'uint32' },
-          { name: 'sub', type: 'Subscription' },
-        ],
-        Subscription: [
-          { name: 'owner', type: 'address' },
-          { name: 'activeAt', type: 'uint32' },
-          { name: 'period', type: 'uint32' },
-          { name: 'frequency', type: 'uint32' },
-          { name: 'redundancy', type: 'uint16' },
-          { name: 'containerId', type: 'bytes32' },
-          { name: 'lazy', type: 'bool' },
-          { name: 'verifier', type: 'address' },
-          { name: 'paymentAmount', type: 'uint256' },
-          { name: 'paymentToken', type: 'address' },
-          { name: 'wallet', type: 'address' },
-        ],
-      },
-      primaryType: 'DelegateSubscription',
-      message: {
-        nonce,
-        expiry,
-        sub: {
-          owner: this.owner,
-          activeAt: this.#active_at,
-          period: this.#period,
-          frequency: this.#frequency,
-          redundancy: this.#redundancy,
-          containerId: this.containers_hash,
-          lazy: this.#lazy,
-          verifier: this.verifier,
-          paymentAmount: BigInt(this.payment_amount),
-          paymentToken: this.payment_token,
-          wallet: this.wallet,
-        },
-      },
-    });
+    const cacheKey = JSON.stringify([
+      nonce,
+      expiry,
+      chain_id,
+      verifying_contract,
+    ]);
+
+    if (!this.#cached_delegate_subscription_typed_data[cacheKey])
+      this.#cached_delegate_subscription_typed_data[cacheKey] =
+        Subscription.methodSchemas.get_delegate_subscription_typed_data.returns.parse(
+          hashTypedData({
+            domain: {
+              name: 'InfernetCoordinator',
+              version: '1',
+              chainId: BigInt(chain_id),
+              verifyingContract: verifying_contract,
+            },
+            types: {
+              EIP712Domain: [
+                { name: 'name', type: 'string' },
+                { name: 'version', type: 'string' },
+                { name: 'chainId', type: 'uint256' },
+                { name: 'verifyingContract', type: 'address' },
+              ],
+              DelegateSubscription: [
+                { name: 'nonce', type: 'uint32' },
+                { name: 'expiry', type: 'uint32' },
+                { name: 'sub', type: 'Subscription' },
+              ],
+              Subscription: [
+                { name: 'owner', type: 'address' },
+                { name: 'activeAt', type: 'uint32' },
+                { name: 'period', type: 'uint32' },
+                { name: 'frequency', type: 'uint32' },
+                { name: 'redundancy', type: 'uint16' },
+                { name: 'containerId', type: 'bytes32' },
+                { name: 'lazy', type: 'bool' },
+                { name: 'verifier', type: 'address' },
+                { name: 'paymentAmount', type: 'uint256' },
+                { name: 'paymentToken', type: 'address' },
+                { name: 'wallet', type: 'address' },
+              ],
+            },
+            primaryType: 'DelegateSubscription',
+            message: {
+              nonce,
+              expiry,
+              sub: {
+                owner: this.owner,
+                activeAt: this.#active_at,
+                period: this.#period,
+                frequency: this.#frequency,
+                redundancy: this.#redundancy,
+                containerId: this.containers_hash,
+                lazy: this.#lazy,
+                verifier: this.verifier,
+                paymentAmount: BigInt(this.payment_amount),
+                paymentToken: this.payment_token,
+                wallet: this.wallet,
+              },
+            },
+          })
+        );
+
+    return this.#cached_delegate_subscription_typed_data[cacheKey];
   }
 
   // Returns subscription parameters as raw array input for generated txs.
   get_tx_inputs(): z.infer<
     typeof Subscription.methodSchemas.get_tx_inputs.returns
   > {
-    return [
+    return Subscription.methodSchemas.get_tx_inputs.returns.parse([
       this.owner,
       this.#active_at,
       this.#period,
@@ -467,7 +488,7 @@ export class Subscription {
       this.payment_amount,
       this.payment_token,
       this.wallet,
-    ];
+    ]);
   }
 }
 
