@@ -150,7 +150,7 @@ export class Wallet {
   ): Promise<Hex> {
     const fnArgs: CoordinatorDeliveryParams = {
       subscription,
-      interval: subscription.interval(),
+      interval: subscription.interval,
       input,
       output,
       proof,
@@ -198,7 +198,7 @@ export class Wallet {
   ): Promise<Hex> {
     const fnArgs: CoordinatorDeliveryParams = {
       subscription,
-      interval: subscription.interval(),
+      interval: subscription.interval,
       input,
       output,
       proof,

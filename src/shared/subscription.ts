@@ -9,37 +9,91 @@ import { add0x, getUnixTimestamp } from '../utils/helpers';
 export class Subscription {
   static fieldSchemas = {
     id: z.number(),
-    payment_amount: z.number(),
-    payment_token: ChecksumAddressSchema,
-    verifier: ChecksumAddressSchema,
-    owner: ChecksumAddressSchema,
-    containers_hash: ByteStringSchema,
-    wallet: ChecksumAddressSchema,
-    active_at: z.number(),
     _container_lookup: z.instanceof(ContainerLookup),
+    _owner: ChecksumAddressSchema,
+    _active_at: z.number(),
     _period: z.number(),
     _frequency: z.number(),
     _redundancy: z.number(),
+    _containers_hash: ByteStringSchema,
     _lazy: z.boolean(),
+    _verifier: ChecksumAddressSchema,
+    _payment_amount: z.number(),
+    _payment_token: ChecksumAddressSchema,
+    _wallet: ChecksumAddressSchema,
     _responses: z.object({}).catchall(z.number()),
     _node_replied: z.object({}).catchall(z.boolean()),
   };
 
+  static methodSchemas = {
+    active_at: {
+      returns: z.number(),
+    },
+    active: {
+      returns: z.boolean(),
+    },
+    cancelled: {
+      returns: z.boolean(),
+    },
+    owner: {
+      returns: ChecksumAddressSchema,
+    },
+    past_last_interval: {
+      returns: z.boolean(),
+    },
+    is_callback: {
+      returns: z.boolean(),
+    },
+    interval: {
+      returns: z.number(),
+    },
+    containers: {
+      returns: z.string().array(),
+    },
+    containers_hash: {
+      returns: ByteStringSchema,
+    },
+    payment_amount: {
+      returns: z.number(),
+    },
+    payment_token: {
+      returns: ChecksumAddressSchema,
+    },
+    verifier: {
+      returns: ChecksumAddressSchema,
+    },
+    requires_proof: {
+      returns: z.boolean(),
+    },
+    provides_payment: {
+      returns: z.boolean(),
+    },
+    wallet: {
+      returns: ChecksumAddressSchema,
+    },
+    last_interval: {
+      returns: z.boolean(),
+    },
+    completed: {
+      returns: z.boolean(),
+    },
+  };
+
   id: z.infer<typeof Subscription.fieldSchemas.id>;
-  payment_amount: z.infer<typeof Subscription.fieldSchemas.payment_amount>;
-  payment_token: z.infer<typeof Subscription.fieldSchemas.payment_token>;
-  verifier: z.infer<typeof Subscription.fieldSchemas.verifier>;
-  owner: z.infer<typeof Subscription.fieldSchemas.owner>;
-  containers_hash: z.infer<typeof Subscription.fieldSchemas.containers_hash>;
-  wallet: z.infer<typeof Subscription.fieldSchemas.wallet>;
-  active_at: z.infer<typeof Subscription.fieldSchemas.active_at>;
   #container_lookup: z.infer<
     typeof Subscription.fieldSchemas._container_lookup
   >;
+  #owner: z.infer<typeof Subscription.fieldSchemas._owner>;
+  #active_at: z.infer<typeof Subscription.fieldSchemas._active_at>;
   #period: z.infer<typeof Subscription.fieldSchemas._period>;
   #frequency: z.infer<typeof Subscription.fieldSchemas._frequency>;
   #redundancy: z.infer<typeof Subscription.fieldSchemas._redundancy>;
+  #containers_hash: z.infer<typeof Subscription.fieldSchemas._containers_hash>;
   #lazy: z.infer<typeof Subscription.fieldSchemas._lazy>;
+  #verifier: z.infer<typeof Subscription.fieldSchemas._verifier>;
+  #payment_amount: z.infer<typeof Subscription.fieldSchemas._payment_amount>;
+  #payment_token: z.infer<typeof Subscription.fieldSchemas._payment_token>;
+  #wallet: z.infer<typeof Subscription.fieldSchemas._wallet>;
   #responses: z.infer<typeof Subscription.fieldSchemas._responses>;
   #node_replied: z.infer<typeof Subscription.fieldSchemas._node_replied>;
 
@@ -59,114 +113,171 @@ export class Subscription {
     wallet
   ) {
     this.id = Subscription.fieldSchemas.id.parse(id);
-    this.payment_amount =
-      Subscription.fieldSchemas.payment_amount.parse(payment_amount);
-    this.payment_token =
-      Subscription.fieldSchemas.payment_token.parse(payment_token);
-    this.verifier = Subscription.fieldSchemas.verifier.parse(
-      getAddress(verifier)
-    );
-    this.owner = Subscription.fieldSchemas.owner.parse(getAddress(owner));
-    this.containers_hash = Subscription.fieldSchemas.containers_hash.parse(
-      add0x(containers_hash)
-    );
-    this.wallet = Subscription.fieldSchemas.wallet.parse(getAddress(wallet));
-    this.active_at = Subscription.fieldSchemas.active_at.parse(active_at);
     this.#container_lookup =
       Subscription.fieldSchemas._container_lookup.parse(container_lookup);
+    this.#owner = Subscription.fieldSchemas._owner.parse(getAddress(owner));
+    this.#active_at = Subscription.fieldSchemas._active_at.parse(active_at);
     this.#period = Subscription.fieldSchemas._period.parse(period);
     this.#frequency = Subscription.fieldSchemas._frequency.parse(frequency);
     this.#redundancy = Subscription.fieldSchemas._redundancy.parse(redundancy);
+    this.#containers_hash = Subscription.fieldSchemas._containers_hash.parse(
+      add0x(containers_hash)
+    );
     this.#lazy = Subscription.fieldSchemas._lazy.parse(lazy);
+    this.#verifier = Subscription.fieldSchemas._verifier.parse(
+      getAddress(verifier)
+    );
+    this.#payment_amount =
+      Subscription.fieldSchemas._payment_amount.parse(payment_amount);
+    this.#payment_token =
+      Subscription.fieldSchemas._payment_token.parse(payment_token);
+    this.#wallet = Subscription.fieldSchemas._wallet.parse(getAddress(wallet));
     this.#responses = Subscription.fieldSchemas._responses.parse({});
     this.#node_replied = Subscription.fieldSchemas._node_replied.parse({});
   }
 
-  /**
-   * Returns whether a subscription is active.
-   */
-  active(): boolean {
-    return getUnixTimestamp() > this.active_at;
+  // Returns the time at which the subscription became active.
+  get active_at(): z.infer<
+    typeof Subscription.methodSchemas.active_at.returns
+  > {
+    return Subscription.methodSchemas.active_at.returns.parse(this.#active_at);
   }
 
-  /**
-   * Returns whether a subscription is cancelled.
-   */
-  cancelled(): boolean {
-    return this.active_at === UINT32_MAX;
+  // Returns whether a subscription is active.
+  get active(): z.infer<typeof Subscription.methodSchemas.active.returns> {
+    return Subscription.methodSchemas.active.returns.parse(
+      getUnixTimestamp() > this.#active_at
+    );
   }
 
-  /**
-   * Returns whether a subscription is past its last interval.
-   */
-  past_last_interval(): boolean {
-    if (!this.active()) return false;
-
-    return this.interval() > this.#frequency;
+  // Returns whether a subscription is cancelled.
+  get cancelled(): z.infer<
+    typeof Subscription.methodSchemas.cancelled.returns
+  > {
+    return Subscription.methodSchemas.cancelled.returns.parse(
+      this.#active_at === UINT32_MAX
+    );
   }
 
-  /**
-   * Returns whether a subscription is a callback subscription (i.e. period = 0).
-   */
-  is_callback(): boolean {
-    return this.#period === 0;
+  // Returns subscription owner.
+  get owner(): z.infer<typeof Subscription.methodSchemas.owner.returns> {
+    return Subscription.methodSchemas.owner.returns.parse(this.#owner);
   }
 
-  /**
-   * Returns subscription interval based on active_at and period.
-   */
-  interval(): number {
+  // Returns whether a subscription is past its last interval.
+  get past_last_interval(): z.infer<
+    typeof Subscription.methodSchemas.past_last_interval.returns
+  > {
+    return Subscription.methodSchemas.past_last_interval.returns.parse(
+      !this.active ? false : this.interval > this.#frequency
+    );
+  }
+
+  // Returns whether a subscription is a callback subscription (i.e. period = 0).
+  get is_callback(): z.infer<
+    typeof Subscription.methodSchemas.is_callback.returns
+  > {
+    return Subscription.methodSchemas.is_callback.returns.parse(
+      this.#period === 0
+    );
+  }
+
+  // Returns subscription interval based on `active_at` and `period`.
+  get interval(): z.infer<typeof Subscription.methodSchemas.interval.returns> {
     // Throw if checking interval for an inactive subscription.
-    if (!this.active())
+    if (!this.active)
       throw new Error('Checking interval for inactive subscription');
 
-    // If period is 0, we're always at interval 1.
-    if (!this.#period) return 1;
-
-    return Math.floor((getUnixTimestamp() - this.active_at) / this.#period) + 1;
+    return Subscription.methodSchemas.interval.returns.parse(
+      // If period is 0, we're always at interval 1.
+      this.#period === 0
+        ? 1
+        : Math.floor((getUnixTimestamp() - this.#active_at) / this.#period) + 1
+    );
   }
 
-  /**
-   * Returns subscription container IDs.
-   */
-  containers(): string[] {
-    return this.#container_lookup.get_containers(this.containers_hash);
+  // Returns subscription container IDs.
+  get containers(): z.infer<
+    typeof Subscription.methodSchemas.containers.returns
+  > {
+    return Subscription.methodSchemas.containers.returns.parse(
+      this.#container_lookup.get_containers(this.containers_hash)
+    );
   }
 
-  /**
-   * Returns whether a subscription requires proof.
-   */
-  requires_proof(): boolean {
-    return this.verifier !== ZERO_ADDRESS;
+  // Returns the subscription container IDs hash.
+  get containers_hash(): z.infer<
+    typeof Subscription.methodSchemas.containers_hash.returns
+  > {
+    return Subscription.methodSchemas.containers_hash.returns.parse(
+      this.#containers_hash
+    );
   }
 
-  /**
-   * Returns whether a subscription requires payment.
-   */
-  provides_payment(): boolean {
-    return this.payment_amount > 0;
+  // Returns the subscription payment amount.
+  get payment_amount(): z.infer<
+    typeof Subscription.methodSchemas.payment_amount.returns
+  > {
+    return Subscription.methodSchemas.payment_amount.returns.parse(
+      this.#payment_amount
+    );
   }
 
-  /**
-   * Returns whether a subscription is on its last interval.
-   */
-  last_interval(): boolean {
-    if (!this.active()) return false;
-
-    return this.interval() === this.#frequency;
+  // Returns the subscription payment token.
+  get payment_token(): z.infer<
+    typeof Subscription.methodSchemas.payment_token.returns
+  > {
+    return Subscription.methodSchemas.payment_token.returns.parse(
+      this.#payment_token
+    );
   }
 
-  /**
-   * Returns whether subscription is completed.
-   */
-  completed(): boolean {
-    if (
-      (this.past_last_interval() || this.last_interval()) &&
-      this.get_response_count(this.#frequency) === this.#redundancy
-    )
-      return true;
+  // Returns subscription verifier address.
+  get verifier(): z.infer<typeof Subscription.methodSchemas.verifier.returns> {
+    return Subscription.methodSchemas.verifier.returns.parse(this.#verifier);
+  }
 
-    return false;
+  // Returns whether a subscription requires proof.
+  get requires_proof(): z.infer<
+    typeof Subscription.methodSchemas.requires_proof.returns
+  > {
+    return Subscription.methodSchemas.requires_proof.returns.parse(
+      this.verifier !== ZERO_ADDRESS
+    );
+  }
+
+  // Returns whether a subscription requires payment.
+  get provides_payment(): z.infer<
+    typeof Subscription.methodSchemas.provides_payment.returns
+  > {
+    return Subscription.methodSchemas.provides_payment.returns.parse(
+      this.payment_amount > 0
+    );
+  }
+
+  // Returns the subscription wallet address.
+  get wallet(): z.infer<typeof Subscription.methodSchemas.wallet.returns> {
+    return Subscription.methodSchemas.wallet.returns.parse(this.#wallet);
+  }
+
+  // Returns whether a subscription is on its last interval.
+  get last_interval(): z.infer<
+    typeof Subscription.methodSchemas.last_interval.returns
+  > {
+    return Subscription.methodSchemas.last_interval.returns.parse(
+      !this.active ? false : this.interval === this.#frequency
+    );
+  }
+
+  // Returns whether subscription is completed.
+  get completed(): z.infer<
+    typeof Subscription.methodSchemas.completed.returns
+  > {
+    // Return true if subscription is on its last interval, and has received its max redundancy responses.
+    return Subscription.methodSchemas.completed.returns.parse(
+      (this.past_last_interval || this.last_interval) &&
+        this.get_response_count(this.#frequency) === this.#redundancy
+    );
   }
 
   /**
@@ -186,11 +297,11 @@ export class Subscription {
    */
   set_response_count(interval: number, count: number): void {
     // Throw if updating response count for inactive subscription.
-    if (!this.active())
+    if (!this.active)
       throw new Error('Cannot update response count for inactive subscription');
 
     // Throw if updating response count for a future interval.
-    if (interval > this.interval())
+    if (interval > this.interval)
       throw new Error('Cannot update response count for future interval');
 
     this.#responses[interval] = count;
@@ -259,7 +370,7 @@ export class Subscription {
         expiry,
         sub: {
           owner: this.owner,
-          activeAt: this.active_at,
+          activeAt: this.#active_at,
           period: this.#period,
           frequency: this.#frequency,
           redundancy: this.#redundancy,
@@ -292,7 +403,7 @@ export class Subscription {
   ] {
     return [
       this.owner,
-      this.active_at,
+      this.#active_at,
       this.#period,
       this.#frequency,
       this.#redundancy,

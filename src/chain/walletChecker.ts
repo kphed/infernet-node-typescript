@@ -93,7 +93,7 @@ export class WalletChecker {
   matches_payment_requirements(sub: Subscription): boolean {
     const skipBanner = `Skipping subscription: ${sub.id}`;
 
-    if (this.#payment_address === ZERO_ADDRESS && sub.provides_payment()) {
+    if (this.#payment_address === ZERO_ADDRESS && sub.provides_payment) {
       console.info(`${skipBanner}: No payment address provided for the node`, {
         sub_id: sub.id,
       });
@@ -101,7 +101,7 @@ export class WalletChecker {
       return false;
     }
 
-    const containers = sub.containers();
+    const containers = sub.containers;
 
     for (let i = 0; i < containers.length; i++) {
       const container = containers[i];

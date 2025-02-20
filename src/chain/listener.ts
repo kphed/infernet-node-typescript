@@ -110,12 +110,12 @@ export class ChainListener extends AsyncTask {
         acc: { filteredIds: number[]; filteredIntervals: number[] },
         subscription: Subscription
       ) => {
-        if (subscription.last_interval()) {
+        if (subscription.last_interval) {
           return {
             filteredIds: [...acc.filteredIds, subscription.id],
             filteredIntervals: [
               ...acc.filteredIntervals,
-              subscription.interval(),
+              subscription.interval,
             ],
           };
         }

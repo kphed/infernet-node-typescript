@@ -247,7 +247,7 @@ export class Guardian {
     const subscription = message.subscription.deserialize(
       this.#container_lookup
     );
-    const subscriptionContainers = subscription.containers();
+    const subscriptionContainers = subscription.containers;
 
     for (let i = 0; i < subscriptionContainers.length; i++) {
       const container = subscriptionContainers[i];
@@ -275,7 +275,7 @@ export class Guardian {
 
     // Filter out subscriptions that require proofs but the last container in their
     // pipeline does not generate one.
-    if (subscription.requires_proof() && !this.#generates_proof(lastContainer))
+    if (subscription.requires_proof && !this.#generates_proof(lastContainer))
       return this.#error(message, 'Container does not generate proof', {
         container: lastContainer,
       });
@@ -300,10 +300,10 @@ export class Guardian {
   ): GuardianError | SubscriptionCreatedMessage {
     const { subscription } = message;
 
-    if (subscription.completed())
+    if (subscription.completed)
       return this.#error(message, 'Subscription completed');
 
-    const subscriptionContainers = subscription.containers();
+    const subscriptionContainers = subscription.containers;
 
     if (!subscriptionContainers.length)
       return this.#error(message, 'Container-set not supported', {
@@ -333,7 +333,7 @@ export class Guardian {
 
     // Filter out subscriptions that require proof but the last container in their
     // pipeline does not generate one.
-    if (subscription.requires_proof() && !this.#generates_proof(lastContainer))
+    if (subscription.requires_proof && !this.#generates_proof(lastContainer))
       return this.#error(message, 'Container does not generate proof', {
         container: lastContainer,
       });

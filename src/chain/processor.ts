@@ -192,7 +192,7 @@ export class ChainProcessor extends AsyncTask {
 
       const key = makePendingOrAttemptsKey(
         [subscription.owner, signature.nonce],
-        subscription.interval()
+        subscription.interval
       );
 
       if (this.#pending[key]) {
@@ -271,7 +271,7 @@ export class ChainProcessor extends AsyncTask {
     subscription_id: SubscriptionID
   ): Promise<boolean> {
     const sub = this.#subscriptions[subscription_id];
-    const subInterval = sub.interval();
+    const subInterval = sub.interval;
 
     if (sub.get_node_replied(subInterval)) return true;
 
@@ -553,7 +553,7 @@ export class ChainProcessor extends AsyncTask {
       sub_id
     );
 
-    if (sub.cancelled()) {
+    if (sub.cancelled) {
       console.info('Subscription cancelled', { id: sub_id });
 
       this.#stop_tracking(sub.id, false);
@@ -589,7 +589,7 @@ export class ChainProcessor extends AsyncTask {
         makeDelegateSubscriptionsKey(sub_id[0], sub_id[1])
       ];
     const txHash =
-      this.#pending[makePendingOrAttemptsKey(sub_id, sub.interval())];
+      this.#pending[makePendingOrAttemptsKey(sub_id, sub.interval)];
 
     // We have not yet submitted the transaction for this delegated subscription.
     if (!txHash || txHash === BLOCKED) return false;
@@ -602,7 +602,7 @@ export class ChainProcessor extends AsyncTask {
     if (found && success) {
       console.info('Delegated subscription completed for interval', {
         id: sub_id,
-        interval: sub.interval(),
+        interval: sub.interval,
       });
 
       this.#stop_tracking(sub_id, true);
@@ -623,13 +623,13 @@ export class ChainProcessor extends AsyncTask {
     subscription: Subscription
   ): Promise<boolean> {
     const { id } = subscription;
-    const interval = subscription.interval();
+    const interval = subscription.interval;
     const responseCount =
       await this.#coordinator.get_subscription_response_count(id, interval);
 
     subscription.set_response_count(interval, responseCount);
 
-    if (subscription.completed()) {
+    if (subscription.completed) {
       console.info('Subscription already completed', {
         id,
         interval,
@@ -705,10 +705,10 @@ export class ChainProcessor extends AsyncTask {
     // been deleted in `#process_subscription`.
     if (!subscription) return true;
 
-    if (subscription.past_last_interval()) {
+    if (subscription.past_last_interval) {
       console.info('Subscription expired', {
         id: subscription.id,
-        interval: subscription.interval(),
+        interval: subscription.interval,
       });
 
       this.#stop_tracking(subscription_id, delegated);
@@ -731,12 +731,12 @@ export class ChainProcessor extends AsyncTask {
     delegated: boolean,
     signature?: CoordinatorSignatureParams
   ): Promise<boolean> {
-    if (subscription.requires_proof()) return false;
+    if (subscription.requires_proof) return false;
 
     try {
       await this.#deliver(subscription, delegated, signature, true);
     } catch (err) {
-      if (err instanceof InfernetError && subscription.is_callback()) {
+      if (err instanceof InfernetError && subscription.is_callback) {
         this.#stop_tracking(subscription.id, delegated);
 
         return true;
@@ -806,7 +806,7 @@ export class ChainProcessor extends AsyncTask {
     } else {
       const chainInput: Hex = await this.#coordinator.get_container_inputs(
         subscription,
-        subscription.interval(),
+        subscription.interval,
         getUnixTimestamp(),
         this.#wallet.address
       );
@@ -820,15 +820,15 @@ export class ChainProcessor extends AsyncTask {
 
     console.debug('Setup container input', {
       id: subscription.id,
-      interval: subscription.interval(),
+      interval: subscription.interval,
       input: containerInput,
     });
 
     return this.#orchestrator.process_chain_processor_job(
       subscription.id,
       containerInput,
-      subscription.containers(),
-      subscription.requires_proof()
+      subscription.containers,
+      subscription.requires_proof
     );
   }
 
@@ -871,7 +871,7 @@ export class ChainProcessor extends AsyncTask {
       }
     ]
   ): Promise<void> {
-    const interval = subscription.interval();
+    const interval = subscription.interval;
 
     console.info('Processing subscription', {
       id,
@@ -912,7 +912,7 @@ export class ChainProcessor extends AsyncTask {
     const lastResult = containerResults.pop() as
       | ContainerError
       | ContainerOutput;
-    const subscriptionIsCallback = subscription.is_callback();
+    const subscriptionIsCallback = subscription.is_callback;
 
     // Check for container error. If error, prevent blocking pending queue and return.
     if ('error' in lastResult) {
@@ -946,7 +946,7 @@ export class ChainProcessor extends AsyncTask {
       console.debug('Container output', { last_result: lastResult });
     }
 
-    if (subscription.requires_proof())
+    if (subscription.requires_proof)
       await this.#escrow_reward_in_wallet(subscription);
 
     const [input, output, proof] = this.#serialize_container_output(lastResult);
@@ -1078,7 +1078,7 @@ export class ChainProcessor extends AsyncTask {
         if (await this.#stop_tracking_if_cancelled(subscriptionId)) continue;
 
         // Skips if subscription is not active.
-        if (!subscription.active()) {
+        if (!subscription.active) {
           console.info('Ignored inactive subscription', {
             id: subId,
             diff: subscription.active_at - getUnixTimestamp(),
@@ -1092,7 +1092,7 @@ export class ChainProcessor extends AsyncTask {
           continue;
         if (
           await this.#stop_tracking_if_maximum_retries_reached(
-            [subscriptionId, subscription.interval()],
+            [subscriptionId, subscription.interval],
             false
           )
         )
@@ -1123,7 +1123,7 @@ export class ChainProcessor extends AsyncTask {
         const subscription: Subscription =
           delegateSubscriptionsCopy[delegateSubscriptionId][0];
 
-        if (!subscription.active()) {
+        if (!subscription.active) {
           console.debug('Ignored inactive subscription', {
             id: delegateSubscriptionId,
             diff: subscription.active_at - getUnixTimestamp(),
@@ -1142,7 +1142,7 @@ export class ChainProcessor extends AsyncTask {
 
         if (
           await this.#stop_tracking_if_maximum_retries_reached(
-            [[subOwner, sigNonce], subscription.interval()],
+            [[subOwner, sigNonce], subscription.interval],
             true
           )
         )
