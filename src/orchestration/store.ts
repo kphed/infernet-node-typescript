@@ -1,47 +1,87 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/9e67ac3af88092a8ac181829da33d863fd8ea990/src/orchestration/store.py.
+import { z } from 'zod';
 import { createClient, RedisClientType } from 'redis';
 import { JobResult, JobStatus, ContainerResult } from '../shared/job';
-import { BaseMessage, OffchainMessage } from '../shared/message';
+import {
+  BaseMessage,
+  BaseMessageSchema,
+  OffchainMessage,
+} from '../shared/message';
+import { AddressSchema } from '../shared/schemas';
 
-interface StatusCounter {
-  success: number;
-  failed: number;
-}
+const StatusCounterSchema = z
+  .object({
+    success: z.number(),
+    failed: z.number(),
+  })
+  .strict();
 
-interface JobCounters {
-  offchain: StatusCounter;
-  onchain: StatusCounter;
-}
+const JobCountersSchema = z
+  .object({
+    offchain: StatusCounterSchema,
+    onchain: StatusCounterSchema,
+  })
+  .strict();
 
-interface ContainerCounters {
-  [key: string]: StatusCounter;
-}
+const ContainerCountersSchema = z.object({}).catchall(StatusCounterSchema);
+
+type StatusCounter = z.infer<typeof StatusCounterSchema>;
+
+type JobCounters = z.infer<typeof JobCountersSchema>;
+
+type ContainerCounters = z.infer<typeof ContainerCountersSchema>;
 
 // 15 minutes in seconds.
 const PENDING_JOB_TTL = 900;
 
 class KeyFormatter {
-  /**
-   * Format key for given message.
-   *
-   * Concatenates address and message id to obtain unique key.
-   */
-  static format({ ip, id }: BaseMessage): string {
-    return `${ip}:${id}`;
+  static methodSchemas = {
+    format: {
+      args: {
+        message: BaseMessageSchema,
+      },
+      returns: z.string().includes(':'),
+    },
+    get_id: {
+      args: {
+        key: z.string(),
+      },
+      returns: z.string(),
+    },
+    matchstr_address: {
+      args: {
+        address: AddressSchema,
+      },
+      returns: z.string(),
+    },
+  };
+
+  // Concatenates address and message id to obtain unique key.
+  static format({
+    ip,
+    id,
+  }: z.infer<typeof KeyFormatter.methodSchemas.format.args.message>): z.infer<
+    typeof KeyFormatter.methodSchemas.format.returns
+  > {
+    return KeyFormatter.methodSchemas.format.returns.parse(`${ip}:${id}`);
   }
 
-  /**
-   * Get message id from key.
-   */
-  static get_id(key: string): string {
-    return key.split(':')[1];
+  // Get message id from key.
+  static get_id(
+    key: z.infer<typeof KeyFormatter.methodSchemas.get_id.args.key>
+  ): z.infer<typeof KeyFormatter.methodSchemas.get_id.returns> {
+    return KeyFormatter.methodSchemas.get_id.returns.parse(key.split(':')[1]);
   }
 
-  /**
-   * Match string for given address.
-   */
-  static matchstr_address(address: string): string {
-    return `${address}:*`;
+  // Match string for given address.
+  static matchstr_address(
+    address: z.infer<
+      typeof KeyFormatter.methodSchemas.matchstr_address.args.address
+    >
+  ): z.infer<typeof KeyFormatter.methodSchemas.matchstr_address.returns> {
+    return KeyFormatter.methodSchemas.matchstr_address.returns.parse(
+      `${address}:*`
+    );
   }
 }
 
@@ -256,7 +296,9 @@ export class DataStore {
   /**
    * Get all pending job IDs for given address.
    */
-  async #get_pending(address: string): Promise<string[]> {
+  async #get_pending(
+    address: z.infer<typeof AddressSchema>
+  ): Promise<string[]> {
     try {
       const scan = await this.#pending.scanIterator({
         MATCH: KeyFormatter.matchstr_address(address),
@@ -278,7 +320,9 @@ export class DataStore {
   /**
    * Get all completed job IDs for given address
    */
-  async #get_completed(address: string): Promise<string[]> {
+  async #get_completed(
+    address: z.infer<typeof AddressSchema>
+  ): Promise<string[]> {
     try {
       const scan = await this.#completed.scanIterator({
         MATCH: KeyFormatter.matchstr_address(address),
@@ -303,7 +347,10 @@ export class DataStore {
    * Optionally filter by pending or completed job status. If pending is undefined,
    * returns all job IDs.
    */
-  async get_job_ids(address: string, pending?: boolean): Promise<string[]> {
+  async get_job_ids(
+    address: z.infer<typeof AddressSchema>,
+    pending?: boolean
+  ): Promise<string[]> {
     if (pending === true) {
       return this.#get_pending(address);
     } else if (pending === false) {
