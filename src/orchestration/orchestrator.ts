@@ -1,4 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/0a5c6cba32e48561338142ef6fabeba3a11057e4/src/orchestration/orchestrator.py.
+import { z } from 'zod';
 import {
   ContainerError,
   ContainerOutput,
@@ -6,8 +7,15 @@ import {
   ContainerInput,
   JobInput,
   JobLocation,
+  JobInputSchema,
+  ContainerResultSchema,
+  ContainerInputSchema,
+  ContainerErrorSchema,
 } from '../shared/job';
-import { OffchainJobMessage } from '../shared/message';
+import {
+  OffchainJobMessage,
+  OffchainJobMessageSchema,
+} from '../shared/message';
 import { ContainerManager } from './docker';
 import { DataStore } from './store';
 
@@ -18,81 +26,121 @@ const RUN_JOB_TIMEOUT = 180_000;
 const PROCESS_STREAMING_JOB_TIMEOUT = 60_000;
 
 export class Orchestrator {
+  static fieldSchemas = {
+    _manager: z.instanceof(ContainerManager),
+    _store: z.instanceof(DataStore),
+    _host: z.string(),
+  };
+
+  static methodSchemas = {
+    _get_container_url: {
+      args: {
+        container: z.string(),
+      },
+      returns: z.string().url(),
+    },
+    _get_headers: {
+      args: {
+        container: z.string(),
+      },
+      returns: z
+        .object({
+          'Content-Type': z.string(),
+          Authorization: z.string().optional(),
+        })
+        .strict(),
+    },
+    _run_job: {
+      args: {
+        job_id: z.any(),
+        job_input: JobInputSchema,
+        containers: z.string().array(),
+        message: OffchainJobMessageSchema.optional(),
+        requires_proof: z.boolean().optional(),
+      },
+      returns: ContainerResultSchema.array(),
+    },
+  };
+
   #manager: ContainerManager;
   #store: DataStore;
   #host: string;
 
-  constructor(manager: ContainerManager, store: DataStore) {
-    this.#manager = manager;
-    this.#store = store;
+  constructor(manager, store) {
+    this.#manager = Orchestrator.fieldSchemas._manager.parse(manager);
+    this.#store = Orchestrator.fieldSchemas._store.parse(store);
 
     // Set host based on runtime environment.
-    this.#host =
-      process.env.RUNTIME === 'docker' ? 'host.docker.internal' : 'localhost';
+    this.#host = Orchestrator.fieldSchemas._host.parse(
+      process.env.RUNTIME === 'docker' ? 'host.docker.internal' : 'localhost'
+    );
   }
 
-  /**
-   * Get the service output URL for the specified container.
-   *
-   * If a custom URL is defined in container config, use this.
-   * Otherwise, retrieve the port for the container and construct the URL using the
-   * host and port.
-   */
-  #get_container_url(container: string): string {
+  // Get the service output URL for the specified container.
+  #get_container_url(
+    container: z.infer<
+      typeof Orchestrator.methodSchemas._get_container_url.args.container
+    >
+  ): z.infer<typeof Orchestrator.methodSchemas._get_container_url.returns> {
     const container_url = this.#manager.get_url(container);
-    const routeName = 'service_output';
+    let serviceOutputUrl;
 
-    if (container_url) return `${container_url}/${routeName}`;
+    if (container_url) {
+      serviceOutputUrl = `${container_url}/service_output`;
+    } else {
+      const port = this.#manager.get_port(container);
+      serviceOutputUrl = `http://${this.#host}:${port}/service_output`;
+    }
 
-    const port = this.#manager.get_port(container);
-
-    return `http://${this.#host}:${port}/${routeName}`;
+    return Orchestrator.methodSchemas._get_container_url.returns.parse(
+      serviceOutputUrl
+    );
   }
 
-  /**
-   * Get the headers for the specified container, including Bearer authorization if available.
-   *
-   * The headers will always include the 'Content-Type' set to 'application/json'.
-   * If the container has a Bearer token, it is included in the 'Authorization' header.
-   */
-  #get_headers(container: string): { [key: string]: string } {
+  // Get the headers for the specified container, including bearer token if available.
+  #get_headers(
+    container: z.infer<
+      typeof Orchestrator.methodSchemas._get_headers.args.container
+    >
+  ): z.infer<typeof Orchestrator.methodSchemas._get_headers.returns> {
     const bearer = this.#manager.get_bearer(container);
-    const headers = { 'Content-Type': 'application/json' };
+    const headers: z.infer<
+      typeof Orchestrator.methodSchemas._get_headers.returns
+    > = { 'Content-Type': 'application/json' };
 
-    if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+    if (bearer) headers.Authorization = `Bearer ${bearer}`;
 
-    return headers;
+    return Orchestrator.methodSchemas._get_headers.returns.parse(headers);
   }
 
-  /**
-   * Runs a job.
-   *
-   * Calls containers in order and passes output of previous container as input to
-   * next container. If any container fails, the job is marked as failed. If all
-   * containers succeed, the job is marked as successful. Stores job status and
-   * results.
-   */
+  // Runs a job by calling containers sequentially, piping their outputs into one another.
   async #run_job(
-    job_id: any,
-    job_input: JobInput,
-    containers: string[],
-    message?: OffchainJobMessage,
-    requires_proof?: boolean
-  ): Promise<ContainerResult[]> {
+    job_id: z.infer<typeof Orchestrator.methodSchemas._run_job.args.job_id>,
+    job_input: z.infer<
+      typeof Orchestrator.methodSchemas._run_job.args.job_input
+    >,
+    containers: z.infer<
+      typeof Orchestrator.methodSchemas._run_job.args.containers
+    >,
+    message?: z.infer<typeof Orchestrator.methodSchemas._run_job.args.message>,
+    requires_proof?: z.infer<
+      typeof Orchestrator.methodSchemas._run_job.args.requires_proof
+    >
+  ): Promise<z.infer<typeof Orchestrator.methodSchemas._run_job.returns>> {
     await this.#store.set_running(message);
 
     const results: ContainerResult[] = [];
 
-    // If only one container, destination of first container is destination of job
+    // If only one container, destination of first container is destination of job.
     // Otherwise, destination of first container is off-chain, and source of next
-    // container is off-chain (i.e. chaining containers together)
-    let inputData: ContainerInput = {
+    // container is off-chain (i.e. chaining containers together).
+    let inputData: ContainerInput = ContainerInputSchema.parse({
       source: job_input.source,
       destination:
         containers.length === 1 ? job_input.destination : JobLocation.OFFCHAIN,
       data: job_input.data,
       requires_proof: !!requires_proof,
-    };
+    });
 
     for (let i = 0; i < containers.length; i++) {
       const container = containers[i];
@@ -115,14 +163,14 @@ export class Orchestrator {
 
         const output = await response.json();
 
-        results.push({ container, output } as ContainerOutput);
+        results.push(ContainerResultSchema.parse({ container, output }));
 
         this.#store.track_container_status(container, 'success');
 
         // If next container is the last container, set destination to
         // job destination. Otherwise, set destination to off-chain
         // (i.e. chaining containers together)
-        inputData = {
+        inputData = ContainerInputSchema.parse({
           source: JobLocation.OFFCHAIN,
           destination:
             i === containers.length - 2
@@ -130,7 +178,7 @@ export class Orchestrator {
               : JobLocation.OFFCHAIN,
           data: output,
           requires_proof: !!requires_proof,
-        };
+        });
       } catch (err: any) {
         clearTimeout(timeout);
 
@@ -146,7 +194,7 @@ export class Orchestrator {
           containerError.error = err.message || String(err);
         }
 
-        results.push(containerError as ContainerError);
+        results.push(ContainerErrorSchema.parse(containerError));
 
         console.error('Container error', {
           id: job_id,
@@ -157,13 +205,13 @@ export class Orchestrator {
 
         this.#store.track_container_status(container, 'failed');
 
-        return results;
+        return Orchestrator.methodSchemas._run_job.returns.parse(results);
       }
     }
 
     await this.#store.set_success(message, results);
 
-    return results;
+    return Orchestrator.methodSchemas._run_job.returns.parse(results);
   }
 
   /**
