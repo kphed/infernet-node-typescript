@@ -1,7 +1,12 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/9e67ac3af88092a8ac181829da33d863fd8ea990/src/orchestration/store.py.
 import { z } from 'zod';
 import { createClient, RedisClientType } from 'redis';
-import { JobResult, JobStatus, ContainerResult } from '../shared/job';
+import {
+  JobResult,
+  JobStatus,
+  JobStatusSchema,
+  ContainerResult,
+} from '../shared/job';
 import {
   BaseMessage,
   BaseMessageSchema,
@@ -11,25 +16,10 @@ import { AddressSchema } from '../shared/schemas';
 
 const StatusCounterSchema = z
   .object({
-    success: z.number(),
-    failed: z.number(),
+    success: z.number().default(0),
+    failed: z.number().default(0),
   })
   .strict();
-
-const JobCountersSchema = z
-  .object({
-    offchain: StatusCounterSchema,
-    onchain: StatusCounterSchema,
-  })
-  .strict();
-
-const ContainerCountersSchema = z.object({}).catchall(StatusCounterSchema);
-
-type StatusCounter = z.infer<typeof StatusCounterSchema>;
-
-type JobCounters = z.infer<typeof JobCountersSchema>;
-
-type ContainerCounters = z.infer<typeof ContainerCountersSchema>;
 
 // 15 minutes in seconds.
 const PENDING_JOB_TTL = 900;
@@ -86,49 +76,86 @@ class KeyFormatter {
 }
 
 class DataStoreCounters {
-  job_counters: JobCounters;
-  container_counters: ContainerCounters;
+  static fieldSchemas = {
+    job_counters: z
+      .object({
+        offchain: StatusCounterSchema,
+        onchain: StatusCounterSchema,
+      })
+      .strict(),
+    container_counters: z.record(StatusCounterSchema),
+  };
+
+  static methodSchemas = {
+    _default_job_counters: {
+      returns: this.fieldSchemas.job_counters,
+    },
+    pop_job_counters: {
+      returns: this.fieldSchemas.job_counters,
+    },
+    _default_container_counters: {
+      returns: this.fieldSchemas.container_counters,
+    },
+    pop_container_counters: {
+      returns: this.fieldSchemas.container_counters,
+    },
+    increment_job_counter: {
+      args: {
+        status: JobStatusSchema,
+        location: z.union([z.literal('offchain'), z.literal('onchain')]),
+      },
+      returns: z.void(),
+    },
+    increment_container_counter: {
+      args: {
+        status: JobStatusSchema,
+        container: z.string(),
+      },
+      returns: z.void(),
+    },
+  };
+
+  job_counters: z.infer<typeof DataStoreCounters.fieldSchemas.job_counters>;
+  container_counters: z.infer<
+    typeof DataStoreCounters.fieldSchemas.container_counters
+  >;
 
   constructor() {
     this.job_counters = this.#default_job_counters();
     this.container_counters = this.#default_container_counters();
   }
 
-  /**
-   * Default value for job counters.
-   */
-  #default_job_counters(): JobCounters {
-    return {
-      offchain: { success: 0, failed: 0 },
-      onchain: { success: 0, failed: 0 },
-    };
+  // Default value for the `job_counters` field.
+  #default_job_counters(): z.infer<
+    typeof DataStoreCounters.methodSchemas._default_job_counters.returns
+  > {
+    return DataStoreCounters.methodSchemas._default_job_counters.returns.parse({
+      offchain: StatusCounterSchema.parse({}),
+      onchain: StatusCounterSchema.parse({}),
+    });
   }
 
-  /**
-   * Returns job counters and resets them.
-   */
-  pop_job_counters(): JobCounters {
+  // Returns job counters and resets them.
+  pop_job_counters(): z.infer<
+    typeof DataStoreCounters.methodSchemas.pop_job_counters.returns
+  > {
     const jobCounters = this.job_counters;
     this.job_counters = this.#default_job_counters();
 
-    return jobCounters;
+    return DataStoreCounters.methodSchemas.pop_job_counters.returns.parse(
+      jobCounters
+    );
   }
 
-  /**
-   * Default value for container counters.
-   */
-  #default_container_counters(): ContainerCounters {
-    // Enables the incrementing of counters for arbitrary container ids.
+  // Default value for the `container_counters` field.
+  #default_container_counters(): z.infer<
+    typeof DataStoreCounters.methodSchemas._default_container_counters.returns
+  > {
     return new Proxy(
       {},
       {
         get: (target, prop) => {
-          if (prop in target) return target[prop];
-
-          target[prop] = {
-            success: 0,
-            failed: 0,
-          };
+          if (!(prop in target)) target[prop] = StatusCounterSchema.parse({});
 
           return target[prop];
         },
@@ -136,30 +163,43 @@ class DataStoreCounters {
     );
   }
 
-  /**
-   * Returns container counters and resets them.
-   */
-  pop_container_counters(): ContainerCounters {
+  // Resets `container_counters` to its default, and returns its pre-reset value.
+  pop_container_counters(): z.infer<
+    typeof DataStoreCounters.methodSchemas.pop_container_counters.returns
+  > {
     const containerCounters = this.container_counters;
     this.container_counters = this.#default_container_counters();
 
-    return containerCounters;
+    return DataStoreCounters.methodSchemas.pop_container_counters.returns.parse(
+      containerCounters
+    );
   }
 
-  /**
-   * Increment job counter.
-   */
+  // Increment job counter.
   increment_job_counter(
-    status: JobStatus,
-    location: 'offchain' | 'onchain'
-  ): void {
+    status: z.infer<
+      typeof DataStoreCounters.methodSchemas.increment_job_counter.args.status
+    >,
+    location: z.infer<
+      typeof DataStoreCounters.methodSchemas.increment_job_counter.args.location
+    >
+  ): z.infer<
+    typeof DataStoreCounters.methodSchemas.increment_job_counter.returns
+  > {
     this.job_counters[location][status] += 1;
   }
 
-  /**
-   * Increment container counter.
-   */
-  increment_container_counter(status: JobStatus, container: string): void {
+  // Increment container counter.
+  increment_container_counter(
+    status: z.infer<
+      typeof DataStoreCounters.methodSchemas.increment_container_counter.args.status
+    >,
+    container: z.infer<
+      typeof DataStoreCounters.methodSchemas.increment_container_counter.args.container
+    >
+  ): z.infer<
+    typeof DataStoreCounters.methodSchemas.increment_container_counter.returns
+  > {
     this.container_counters[container][status] += 1;
   }
 }
