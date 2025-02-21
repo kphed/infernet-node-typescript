@@ -2,16 +2,11 @@
 import { z } from 'zod';
 import { createClient, RedisClientType } from 'redis';
 import {
-  JobResult,
-  JobStatus,
   JobStatusSchema,
-  ContainerResult,
+  ContainerResultSchema,
+  JobResultSchema,
 } from '../shared/job';
-import {
-  BaseMessage,
-  BaseMessageSchema,
-  OffchainMessage,
-} from '../shared/message';
+import { BaseMessageSchema, OffchainMessageSchema } from '../shared/message';
 import { AddressSchema } from '../shared/schemas';
 
 const StatusCounterSchema = z
@@ -20,9 +15,6 @@ const StatusCounterSchema = z
     failed: z.number().default(0),
   })
   .strict();
-
-// 15 minutes in seconds.
-const PENDING_JOB_TTL = 900;
 
 class KeyFormatter {
   static methodSchemas = {
@@ -205,24 +197,106 @@ class DataStoreCounters {
 }
 
 export class DataStore {
-  counters: DataStoreCounters;
-  #onchain_pending: number;
+  static fieldSchemas = {
+    counters: z.instanceof(DataStoreCounters),
+    _onchain_pending: z.number(),
+  };
+
+  static methodSchemas = {
+    setup: {
+      returns: z.promise(z.void()),
+    },
+    get_pending_counters: {
+      returns: z.promise(
+        z
+          .object({
+            offchain: z.number(),
+            onchain: z.number(),
+          })
+          .strict()
+      ),
+    },
+    _set: {
+      args: {
+        message: OffchainMessageSchema,
+        status: JobStatusSchema,
+        results: ContainerResultSchema.array(),
+      },
+      returns: z.promise(z.void()),
+    },
+    get: {
+      args: {
+        messages: BaseMessageSchema.array(),
+        intermediate: z.boolean().default(false),
+      },
+      returns: JobResultSchema.array(),
+    },
+    _get_pending: {
+      args: {
+        address: AddressSchema,
+      },
+      returns: z.string().array(),
+    },
+    _get_completed: {
+      args: {
+        address: AddressSchema,
+      },
+      returns: z.string().array(),
+    },
+    get_job_ids: {
+      args: {
+        address: AddressSchema,
+        pending: z.boolean().optional(),
+      },
+      returns: z.string().array(),
+    },
+    set_running: {
+      args: {
+        message: OffchainMessageSchema,
+      },
+      returns: z.promise(z.void()),
+    },
+    set_success: {
+      args: {
+        message: OffchainMessageSchema.optional(),
+        results: ContainerResultSchema.array(),
+      },
+      returns: z.promise(z.void()),
+    },
+    set_failed: {
+      args: {
+        message: OffchainMessageSchema.optional(),
+        results: ContainerResultSchema.array(),
+      },
+      returns: z.promise(z.void()),
+    },
+    track_container_status: {
+      args: {
+        container: z.string(),
+        status: JobStatusSchema,
+      },
+      returns: z.void(),
+    },
+  };
+
+  counters: z.infer<typeof DataStore.fieldSchemas.counters>;
+  #onchain_pending: z.infer<typeof DataStore.fieldSchemas._onchain_pending>;
   #completed: RedisClientType;
   #pending: RedisClientType;
 
   constructor(host: string, port: number) {
-    this.counters = new DataStoreCounters();
-    this.#onchain_pending = 0;
+    this.counters = DataStore.fieldSchemas.counters.parse(
+      new DataStoreCounters()
+    );
+    this.#onchain_pending = DataStore.fieldSchemas._onchain_pending.parse(0);
 
     // Needs to be set up by calling `setup_redis_clients` first.
     this.#completed = createClient({ socket: { host, port }, database: 0 });
     this.#pending = createClient({ socket: { host, port }, database: 1 });
   }
 
-  /**
-   * Set up Redis clients for completed and pending jobs.
-   */
-  async setup_redis_clients(): Promise<void> {
+  // Set up Redis clients for completed and pending jobs.
+  async setup(): z.infer<typeof DataStore.methodSchemas.setup.returns> {
     try {
       // Connect to the databases.
       await this.#completed.connect();
@@ -240,179 +314,130 @@ export class DataStore {
       );
     }
 
-    console.log(`Initialized Redis clients`);
+    console.log('Initialized Redis clients');
   }
 
-  /**
-   * Returns pending counters for onchain and offchain jobs.
-   */
-  async get_pending_counters(): Promise<{
-    offchain: number;
-    onchain: number;
-  }> {
-    return {
+  // Returns pending counters for onchain and offchain jobs.
+  async get_pending_counters(): z.infer<
+    typeof DataStore.methodSchemas.get_pending_counters.returns
+  > {
+    return DataStore.methodSchemas.get_pending_counters.returns.parse({
       offchain: await this.#pending.dbSize(),
       onchain: this.#onchain_pending,
-    };
+    });
   }
 
-  /**
-   * Private method to set job data.
-   *
-   * Sets job data to Redis. If status is "running", sets job as pending. If status
-   * is "success" or "failed", sets job as completed, and removes it from pending.
-   *
-   * NOTE: Pending jobs are set with an expiration time of PENDING_JOB_TTL,
-   * which is a loose upper bound on the time it should take for a job to complete.
-   * This is to ensure crashes and / or incorrect use of the `/status` endpoint do
-   * not leave jobs in a pending state indefinitely.
-   */
+  // Set job data.
   async #set(
-    message: OffchainMessage,
-    status: JobStatus,
-    results: ContainerResult[] = []
-  ): Promise<void> {
-    const job = JSON.stringify({
-      id: message.id,
-      status,
-      intermediate_results: results.slice(0, results.length - 1),
-      result: results[results.length - 1],
-    } as JobResult);
+    message: z.infer<typeof DataStore.methodSchemas._set.args.message>,
+    status: z.infer<typeof DataStore.methodSchemas._set.args.status>,
+    results: z.infer<typeof DataStore.methodSchemas._set.args.results> = []
+  ): z.infer<typeof DataStore.methodSchemas._set.returns> {
+    // Convert job result object into a string type so that it can be stored.
+    const job = JSON.stringify(
+      JobResultSchema.parse({
+        id: message.id,
+        status,
+        intermediate_results: results.slice(0, results.length - 1),
+        result: results[results.length - 1],
+      })
+    );
     const formattedMessage = KeyFormatter.format(message);
 
-    try {
-      if (status === 'running') {
-        // Set job as pending. Expiration time is PENDING_JOB_TTL.
-        await this.#pending.setEx(formattedMessage, PENDING_JOB_TTL, job);
-      } else {
-        // Remove job from pending.
-        await this.#pending.del(formattedMessage);
+    if (status === 'running') {
+      // Set job as pending. Expiration time is 15 minutes (900 seconds).
+      await this.#pending.setEx(formattedMessage, 900, job);
+    } else {
+      // Remove job from pending.
+      await this.#pending.del(formattedMessage);
 
-        // Set job as completed.
-        await this.#completed.set(formattedMessage, job);
-      }
-    } catch (err) {
-      console.error(`Failed to set job data in Redis DB`, err);
-
-      throw err;
+      // Set job as completed.
+      await this.#completed.set(formattedMessage, job);
     }
   }
 
-  /**
-   * Get job data
-   *
-   * Returns job data from Redis for specified job IDs. Checks pending and completed
-   * jobs DBs. Ignores jobs that are not found. Optionally returns intermediate
-   * results.
-   */
+  // Get job data.
   async get(
-    messages: BaseMessage[],
-    intermediate: boolean = false
-  ): Promise<JobResult[]> {
-    try {
-      const keys = messages.map((message) => KeyFormatter.format(message));
-      const completedJobs = (await this.#completed.mGet(keys)) ?? [];
-      const pendingJobs = (await this.#pending.mGet(keys)) ?? [];
-      const parsedJobs: JobResult[] = completedJobs
-        .concat(pendingJobs)
-        .reduce(
-          (acc: JobResult[], val: string | null) =>
-            !val ? acc : [...acc, JSON.parse(val)],
-          []
-        );
+    messages: z.infer<typeof DataStore.methodSchemas.get.args.messages>,
+    intermediate: z.infer<typeof DataStore.methodSchemas.get.args.intermediate>
+  ): Promise<z.infer<typeof DataStore.methodSchemas.get.returns>> {
+    const keys = messages.map((message) => KeyFormatter.format(message));
+    const jobs = ((await this.#completed.mGet(keys)) ?? []).concat(
+      (await this.#pending.mGet(keys)) ?? []
+    );
 
-      if (!intermediate)
-        return parsedJobs.map((job) => ({
-          ...job,
-          intermediate_results: [],
-        }));
+    return DataStore.methodSchemas.get.returns.parse(
+      jobs.reduce((acc, val: string | null) => {
+        if (!val) return acc;
 
-      return parsedJobs;
-    } catch (err) {
-      throw err;
-    }
+        const jobResult = JSON.parse(val);
+
+        return acc.concat({
+          ...jobResult,
+          intermediate_results: !intermediate
+            ? []
+            : jobResult.intermediate_results,
+        });
+      }, [])
+    );
   }
 
-  /**
-   * Get all pending job IDs for given address.
-   */
+  // Get all pending job IDs for a given address.
   async #get_pending(
-    address: z.infer<typeof AddressSchema>
-  ): Promise<string[]> {
-    try {
-      const scan = await this.#pending.scanIterator({
-        MATCH: KeyFormatter.matchstr_address(address),
-      });
-      const ids: string[] = [];
+    address: z.infer<typeof DataStore.methodSchemas._get_pending.args.address>
+  ): Promise<z.infer<typeof DataStore.methodSchemas._get_pending.returns>> {
+    const scan = await this.#pending.scanIterator({
+      MATCH: KeyFormatter.matchstr_address(address),
+    });
+    const ids: string[] = [];
 
-      for await (const key of scan) {
-        ids.push(KeyFormatter.get_id(key));
-      }
-
-      return ids;
-    } catch (err) {
-      console.log('Unable to get pending job IDs', err);
-
-      throw err;
+    for await (const key of scan) {
+      ids.push(KeyFormatter.get_id(key));
     }
+
+    return DataStore.methodSchemas._get_pending.returns.parse(ids);
   }
 
-  /**
-   * Get all completed job IDs for given address
-   */
+  // Get all completed job IDs for a given address.
   async #get_completed(
-    address: z.infer<typeof AddressSchema>
-  ): Promise<string[]> {
-    try {
-      const scan = await this.#completed.scanIterator({
-        MATCH: KeyFormatter.matchstr_address(address),
-      });
-      const ids: string[] = [];
+    address: z.infer<typeof DataStore.methodSchemas._get_completed.args.address>
+  ): Promise<z.infer<typeof DataStore.methodSchemas._get_completed.returns>> {
+    const scan = await this.#completed.scanIterator({
+      MATCH: KeyFormatter.matchstr_address(address),
+    });
+    const ids: string[] = [];
 
-      for await (const key of scan) {
-        ids.push(KeyFormatter.get_id(key));
-      }
-
-      return ids;
-    } catch (err) {
-      console.log('Unable to get completed job IDs', err);
-
-      throw err;
+    for await (const key of scan) {
+      ids.push(KeyFormatter.get_id(key));
     }
+
+    return DataStore.methodSchemas._get_completed.returns.parse(ids);
   }
 
-  /**
-   * Get all job IDs for given address.
-   *
-   * Optionally filter by pending or completed job status. If pending is undefined,
-   * returns all job IDs.
-   */
+  // Get pending, complete, or all job IDs for a given address.
   async get_job_ids(
-    address: z.infer<typeof AddressSchema>,
-    pending?: boolean
-  ): Promise<string[]> {
-    if (pending === true) {
-      return this.#get_pending(address);
+    address: z.infer<typeof DataStore.methodSchemas.get_job_ids.args.address>,
+    pending?: z.infer<typeof DataStore.methodSchemas.get_job_ids.args.pending>
+  ): Promise<z.infer<typeof DataStore.methodSchemas.get_job_ids.returns>> {
+    let jobIds;
+
+    if (pending) {
+      jobIds = await this.#get_pending(address);
     } else if (pending === false) {
-      return this.#get_completed(address);
+      jobIds = await this.#get_completed(address);
+    } else {
+      jobIds = (await this.#get_pending(address)).concat(
+        await this.#get_completed(address)
+      );
     }
 
-    try {
-      const pendingJobIds = await this.#get_pending(address);
-      const completedJobIds = await this.#get_completed(address);
-
-      return pendingJobIds.concat(completedJobIds);
-    } catch (err) {
-      console.log('Unable to get job IDs', err);
-
-      throw err;
-    }
+    return DataStore.methodSchemas.get_job_ids.returns.parse(jobIds);
   }
 
-  /**
-   * Track running job, store in pending jobs cache if offchain.
-   */
-  async set_running(message?: OffchainMessage): Promise<void> {
+  // Set a job's status to "running".
+  async set_running(
+    message?: z.infer<typeof DataStore.methodSchemas.set_running.args.message>
+  ): z.infer<typeof DataStore.methodSchemas.set_running.returns> {
     if (message) {
       await this.#set(message, 'running');
     } else {
@@ -420,48 +445,53 @@ export class DataStore {
     }
   }
 
-  /**
-   * Track successful job, store in completed jobs cache if offchain.
-   */
+  // Set a job's status to "success".
   async set_success(
-    message: OffchainMessage | undefined,
-    results: ContainerResult[]
-  ): Promise<void> {
-    const successStatus: JobStatus = 'success';
+    message: z.infer<typeof DataStore.methodSchemas.set_success.args.message>,
+    results: z.infer<typeof DataStore.methodSchemas.set_success.args.results>
+  ): z.infer<typeof DataStore.methodSchemas.set_success.returns> {
+    const successStatus = JobStatusSchema.parse('success');
 
     if (message) {
       await this.#set(message, successStatus, results);
-      this.counters.increment_job_counter(successStatus, 'offchain');
     } else {
       this.#onchain_pending -= 1;
-
-      this.counters.increment_job_counter(successStatus, 'onchain');
     }
+
+    this.counters.increment_job_counter(
+      successStatus,
+      message ? 'offchain' : 'onchain'
+    );
   }
 
-  /**
-   * Track failed job, store in completed jobs cache if offchain.
-   */
+  // Set a job's status to "failed".
   async set_failed(
-    message: OffchainMessage | undefined,
-    results: ContainerResult[]
-  ): Promise<void> {
-    const failedStatus: JobStatus = 'failed';
+    message: z.infer<typeof DataStore.methodSchemas.set_failed.args.message>,
+    results: z.infer<typeof DataStore.methodSchemas.set_failed.args.results>
+  ): z.infer<typeof DataStore.methodSchemas.set_failed.returns> {
+    const failedStatus = JobStatusSchema.parse('failed');
 
     if (message) {
       await this.#set(message, failedStatus, results);
-      this.counters.increment_job_counter(failedStatus, 'offchain');
     } else {
       this.#onchain_pending -= 1;
-
-      this.counters.increment_job_counter(failedStatus, 'onchain');
     }
+
+    this.counters.increment_job_counter(
+      failedStatus,
+      message ? 'offchain' : 'onchain'
+    );
   }
 
-  /**
-   * Track container status.
-   */
-  track_container_status(container: string, status: JobStatus): void {
+  // Track a container's status.
+  track_container_status(
+    container: z.infer<
+      typeof DataStore.methodSchemas.track_container_status.args.container
+    >,
+    status: z.infer<
+      typeof DataStore.methodSchemas.track_container_status.args.status
+    >
+  ): z.infer<typeof DataStore.methodSchemas.track_container_status.returns> {
     this.counters.increment_container_counter(status, container);
   }
 }
