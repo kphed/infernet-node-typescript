@@ -2,10 +2,8 @@
 import { z } from 'zod';
 import {
   ContainerError,
-  ContainerOutput,
   ContainerResult,
   ContainerInput,
-  JobInput,
   JobLocation,
   JobInputSchema,
   ContainerResultSchema,
@@ -13,18 +11,9 @@ import {
   ContainerErrorSchema,
   ContainerOutputSchema,
 } from '../shared/job';
-import {
-  OffchainJobMessage,
-  OffchainJobMessageSchema,
-} from '../shared/message';
+import { OffchainJobMessageSchema } from '../shared/message';
 import { ContainerManager } from './docker';
 import { DataStore } from './store';
-
-// 3 minutes.
-const RUN_JOB_TIMEOUT = 180_000;
-
-// 1 minute.
-const PROCESS_STREAMING_JOB_TIMEOUT = 60_000;
 
 export class Orchestrator {
   static fieldSchemas = {
@@ -80,7 +69,6 @@ export class Orchestrator {
       args: {
         message: OffchainJobMessageSchema,
       },
-      returns: z.promise(z.void()),
     },
     collect_service_resources: {
       args: {
@@ -175,7 +163,10 @@ export class Orchestrator {
       const url = this.#get_container_url(container);
       const headers = this.#get_headers(container);
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), RUN_JOB_TIMEOUT);
+
+      // Abort request after 180 seconds.
+      const timeout = setTimeout(() => controller.abort(), 180_000);
+
       let response;
 
       try {
@@ -290,11 +281,11 @@ export class Orchestrator {
   }
 
   // Runs a streaming job.
-  async process_streaming_job(
+  async *process_streaming_job(
     message: z.infer<
       typeof Orchestrator.methodSchemas.process_streaming_job.args.message
     >
-  ): z.infer<typeof Orchestrator.methodSchemas.process_streaming_job.returns> {
+  ): AsyncGenerator<Buffer, void, unknown> {
     // Only the first container is supported for streaming (i.e. no chaining).
     const [container] = message.containers;
 
@@ -314,10 +305,10 @@ export class Orchestrator {
         data: message.data,
       });
       const controller = new AbortController();
-      const timeout = setTimeout(
-        () => controller.abort(),
-        PROCESS_STREAMING_JOB_TIMEOUT
-      );
+
+      // Abort request after 60 seconds.
+      const timeout = setTimeout(() => controller.abort(), 60_000);
+
       const response = await fetch(url, {
         method: 'POST',
         headers,
@@ -328,12 +319,18 @@ export class Orchestrator {
       if (response.status !== 200) throw new Error('Response status not OK.');
       if (!response.body) throw new Error('No response body.');
 
-      clearTimeout(timeout);
-
       const chunks: Buffer[] = [];
 
-      for await (const chunk of response.body) {
-        chunks.push(Buffer.from(chunk));
+      try {
+        for await (const chunk of response.body) {
+          const bufferChunk = Buffer.from(chunk);
+
+          chunks.push(bufferChunk);
+
+          yield bufferChunk;
+        }
+      } finally {
+        clearTimeout(timeout);
       }
 
       const output = Buffer.concat(chunks).toString('utf-8');
