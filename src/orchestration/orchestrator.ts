@@ -11,6 +11,7 @@ import {
   ContainerResultSchema,
   ContainerInputSchema,
   ContainerErrorSchema,
+  ContainerOutputSchema,
 } from '../shared/job';
 import {
   OffchainJobMessage,
@@ -59,6 +60,33 @@ export class Orchestrator {
         requires_proof: z.boolean().optional(),
       },
       returns: ContainerResultSchema.array(),
+    },
+    process_chain_processor_job: {
+      args: {
+        job_id: z.any(),
+        job_input: JobInputSchema,
+        containers: z.string().array(),
+        requires_proof: z.boolean(),
+      },
+      returns: ContainerResultSchema.array(),
+    },
+    process_offchain_job: {
+      args: {
+        message: OffchainJobMessageSchema,
+      },
+      returns: z.promise(z.void()),
+    },
+    process_streaming_job: {
+      args: {
+        message: OffchainJobMessageSchema,
+      },
+      returns: z.promise(z.void()),
+    },
+    collect_service_resources: {
+      args: {
+        model_id: z.string().optional(),
+      },
+      returns: z.record(z.any()),
     },
   };
 
@@ -214,15 +242,25 @@ export class Orchestrator {
     return Orchestrator.methodSchemas._run_job.returns.parse(results);
   }
 
-  /**
-   * Processes arbitrary job from ChainProcessor.
-   */
+  // Processes arbitrary job from ChainProcessor.
   process_chain_processor_job(
-    job_id: any,
-    job_input: JobInput,
-    containers: string[],
-    requires_proof: boolean
-  ): Promise<ContainerResult[]> {
+    job_id: z.infer<
+      typeof Orchestrator.methodSchemas.process_chain_processor_job.args.job_id
+    >,
+    job_input: z.infer<
+      typeof Orchestrator.methodSchemas.process_chain_processor_job.args.job_input
+    >,
+    containers: z.infer<
+      typeof Orchestrator.methodSchemas.process_chain_processor_job.args.containers
+    >,
+    requires_proof: z.infer<
+      typeof Orchestrator.methodSchemas.process_chain_processor_job.args.requires_proof
+    >
+  ): Promise<
+    z.infer<
+      typeof Orchestrator.methodSchemas.process_chain_processor_job.returns
+    >
+  > {
     return this.#run_job(
       job_id,
       job_input,
@@ -232,47 +270,49 @@ export class Orchestrator {
     );
   }
 
-  /**
-   * Processes off-chain job message.
-   */
-  async process_offchain_job(message: OffchainJobMessage): Promise<void> {
+  // Processes off-chain job message.
+  async process_offchain_job(
+    message: z.infer<
+      typeof Orchestrator.methodSchemas.process_offchain_job.args.message
+    >
+  ): z.infer<typeof Orchestrator.methodSchemas.process_offchain_job.returns> {
     await this.#run_job(
       message.id,
-      {
+      JobInputSchema.parse({
         source: JobLocation.OFFCHAIN,
         destination: JobLocation.OFFCHAIN,
         data: message.data,
-      } as JobInput,
+      }),
       message.containers,
       message,
       message.requires_proof
     );
   }
 
-  /**
-   * Runs a streaming job.
-   *
-   * Calls streaming container and yields chunks of output as they are received. If
-   * the container fails, the job is marked as failed. If the container succeeds, the
-   * job is marked as successful, and the full output is stored in Redis as an array
-   * of chunks.
-   *
-   * NOTE: If multiple containers are specified in the message, only the first
-   * container is executed, the rest are ignored.
-   */
-  async process_streaming_job(message: OffchainJobMessage) {
+  // Runs a streaming job.
+  async process_streaming_job(
+    message: z.infer<
+      typeof Orchestrator.methodSchemas.process_streaming_job.args.message
+    >
+  ): z.infer<typeof Orchestrator.methodSchemas.process_streaming_job.returns> {
+    // Only the first container is supported for streaming (i.e. no chaining).
     const [container] = message.containers;
+
     const url = this.#get_container_url(container);
     const headers = this.#get_headers(container);
 
-    await this.#store.set_running(message);
+    await this.#store.set_running(
+      Orchestrator.methodSchemas.process_streaming_job.args.message.parse(
+        message
+      )
+    );
 
     try {
-      const job_input: JobInput = {
+      const job_input = JobInputSchema.parse({
         source: JobLocation.OFFCHAIN,
         destination: JobLocation.STREAM,
         data: message.data,
-      };
+      });
       const controller = new AbortController();
       const timeout = setTimeout(
         () => controller.abort(),
@@ -299,10 +339,10 @@ export class Orchestrator {
       const output = Buffer.concat(chunks).toString('utf-8');
 
       await this.#store.set_success(message, [
-        {
+        ContainerOutputSchema.parse({
           container,
           output: JSON.parse(output),
-        } as ContainerOutput,
+        }),
       ]);
 
       this.#store.track_container_status(container, 'success');
@@ -316,38 +356,35 @@ export class Orchestrator {
       });
 
       await this.#store.set_failed(message, [
-        {
+        ContainerErrorSchema.parse({
           container,
           error,
-        } as ContainerError,
+        }),
       ]);
 
       this.#store.track_container_status(container, 'failed');
     }
   }
 
-  /**
-   * Collects service resources from running containers.
-   *
-   * Calls each container's /service-resources endpoint to retrieve its resources.
-   * If model ID is specified, checks whether that model is supported instead.
-   */
-  async collect_service_resources(model_id?: string): Promise<{
-    [key: string]: any;
-  }> {
-    const runningContainerIds: string[] =
-      await this.#manager.running_containers();
-
-    const makeContainerUrl = (containerId: string): string => {
-      const port = this.#manager.get_port(containerId);
+  // Collects service resources from running containers.
+  async collect_service_resources(
+    model_id?: z.infer<
+      typeof Orchestrator.methodSchemas.collect_service_resources.args.model_id
+    >
+  ): Promise<
+    z.infer<typeof Orchestrator.methodSchemas.collect_service_resources.returns>
+  > {
+    const makeContainerUrl = (port: number): string => {
       const baseUrl = `http://${this.#host}:${port}/service-resources`;
 
+      // If model ID specified, check which containers serve the model.
+      // Otherwise, fetch all resources from each container.
       return model_id ? `${baseUrl}?model_id=${model_id}` : baseUrl;
     };
 
     const containerResources = await Promise.all(
-      runningContainerIds.map(async (containerId) => {
-        const url = makeContainerUrl(containerId);
+      this.#manager.configs.map(async ({ id, port }) => {
+        const url = makeContainerUrl(port);
 
         try {
           const response = await fetch(url);
@@ -355,22 +392,24 @@ export class Orchestrator {
           if (response.status !== 200)
             throw new Error('Response status not OK.');
 
-          return [containerId, await response.json()];
+          return [id, await response.json()];
         } catch (err) {
           console.error(`Error fetching data from ${url}: ${err}`);
         }
       })
     );
 
-    return containerResources.reduce((acc, val) => {
-      if (!val) return acc;
+    return Orchestrator.methodSchemas.collect_service_resources.returns.parse(
+      containerResources.reduce((acc, val) => {
+        if (!val) return acc;
 
-      const [containerId, data] = val;
+        const [id, data] = val;
 
-      return {
-        ...acc,
-        [containerId]: data,
-      };
-    }, {});
+        return {
+          ...acc,
+          [id]: data,
+        };
+      }, {})
+    );
   }
 }
