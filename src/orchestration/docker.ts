@@ -143,11 +143,19 @@ export class ContainerManager extends AsyncTask {
     });
   }
 
+  // Container configs.
+  get configs(): z.infer<typeof ContainerManager.fieldSchemas._configs> {
+    // `parse` returns a deep clone of `this.#configs`, preventing external mutation.
+    return ContainerManager.fieldSchemas._configs.parse(this.#configs);
+  }
+
   // Port mappings for containers. Does NOT guarantee containers are running.
   get port_mappings(): z.infer<
     typeof ContainerManager.methodSchemas.port_mappings.returns
   > {
-    return this.#port_mappings;
+    return ContainerManager.methodSchemas.port_mappings.returns.parse(
+      this.#port_mappings
+    );
   }
 
   // Get the list of running container IDs.
