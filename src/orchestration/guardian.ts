@@ -1,6 +1,7 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/orchestration/guardian.py.
 import { z } from 'zod';
 import { Address4, Address6 } from 'ip-address';
+import { LRUCache } from 'lru-cache';
 import { ContainerLookup } from '../chain';
 import { WalletChecker } from '../chain';
 import {
@@ -23,7 +24,15 @@ export const IPv6Schema = z.custom<Address6>();
 
 export const ContainerRestrictionsSchema = z
   .object({
-    allowed_ips: z.union([IPv4Schema, IPv6Schema]).array(),
+    allowed_ips: z
+      .object({
+        isV4: z.boolean(),
+        startAddressBN: z.bigint(),
+        endAddressBN: z.bigint(),
+      })
+      .strict()
+      .array(),
+    allowed_ips_cache: z.custom<LRUCache<bigint, boolean>>(),
     allowed_addresses: AddressSchema.array(),
     allowed_delegate_addresses: AddressSchema.array(),
     external: z.boolean(),
@@ -168,7 +177,17 @@ export class Guardian {
           }
         ) => {
           const restriction: ContainerRestrictions = {
-            allowed_ips: allowed_ips.map((ip) => getIpNetwork(ip, false)),
+            allowed_ips: allowed_ips.map((ip) => {
+              const ipNetwork = getIpNetwork(ip, false);
+
+              // Extract the IP version, and the numeric values of the network's IP address range,
+              // which will later be used to determine whether IPs are allowed.
+              return {
+                isV4: Address4.isValid(ipNetwork.address),
+                startAddressBN: ipNetwork.startAddress().bigInt(),
+                endAddressBN: ipNetwork.endAddress().bigInt(),
+              };
+            }),
             allowed_addresses: allowed_addresses.map((address) =>
               AddressSchema.parse(address.toLowerCase())
             ),
@@ -177,6 +196,11 @@ export class Guardian {
             ),
             external,
             generates_proofs,
+            allowed_ips_cache:
+              ContainerRestrictionsSchema.shape.allowed_ips_cache.parse(
+                // Allow 100 unique IPs (keyed by their BigInt value) to be checked and cached for each container.
+                new LRUCache({ max: 100 })
+              ),
           };
 
           return {
@@ -249,24 +273,32 @@ export class Guardian {
       isV4 ? new Address4(address) : new Address6(address)
     ).bigInt();
 
-    return Guardian.methodSchemas._is_allowed_ip.returns.parse(
-      !!this.#restrictions[container].allowed_ips.find((ipNetwork) => {
-        const ipNetworkIsV4 = Address4.isValid(ipNetwork.address);
+    let isAllowed =
+      this.#restrictions[container].allowed_ips_cache.get(addressBN);
 
-        if ((isV4 && !ipNetworkIsV4) || (!isV4 && ipNetworkIsV4))
-          throw new Error('IP version mismatch.');
+    // If this IP address has already been checked, return the cached result.
+    if (isAllowed !== undefined) {
+      return isAllowed;
+    } else {
+      isAllowed = Guardian.methodSchemas._is_allowed_ip.returns.parse(
+        !!this.#restrictions[container].allowed_ips.find((ipNetwork) => {
+          if ((isV4 && !ipNetwork.isV4) || (!isV4 && ipNetwork.isV4))
+            throw new Error('IP version mismatch.');
 
-        // Convert IP addresses to their numeric values, and check whether the address is in range.
-        const networkStartAddressBN = ipNetwork.startAddress().bigInt();
-        const networkEndAddressBN = ipNetwork.endAddress().bigInt();
+          if (
+            ipNetwork.startAddressBN <= addressBN &&
+            addressBN <= ipNetwork.endAddressBN
+          )
+            return true;
 
-        if (
-          networkStartAddressBN <= addressBN &&
-          addressBN <= networkEndAddressBN
-        )
-          return true;
-      })
-    );
+          return false;
+        })
+      );
+
+      this.#restrictions[container].allowed_ips_cache.set(addressBN, isAllowed);
+    }
+
+    return isAllowed;
   }
 
   // Returns whether onchain address is allowed for container.
