@@ -5,13 +5,14 @@ import { ContainerLookup } from '../chain';
 import { WalletChecker } from '../chain';
 import {
   DelegatedSubscriptionMessage,
-  FilteredMessage,
   GuardianError,
   MessageType,
   OffchainJobMessage,
-  PrefilterMessage,
-  SubscriptionCreatedMessage,
   PrefilterMessageSchema,
+  OffchainJobMessageSchema,
+  DelegatedSubscriptionMessageSchema,
+  SubscriptionCreatedMessageSchema,
+  FilteredMessageSchema,
 } from '../shared/message';
 import { getUnixTimestamp } from '../utils/helpers';
 import { AddressSchema } from '../shared/schemas';
@@ -108,6 +109,36 @@ export class Guardian {
         params: z.any().optional(),
       },
       returns: z.instanceof(GuardianError),
+    },
+    _process_offchain_message: {
+      args: {
+        message: OffchainJobMessageSchema,
+      },
+      returns: z.union([z.instanceof(GuardianError), OffchainJobMessageSchema]),
+    },
+    _process_delegated_subscription_message: {
+      args: {
+        message: DelegatedSubscriptionMessageSchema,
+      },
+      returns: z.union([
+        z.instanceof(GuardianError),
+        DelegatedSubscriptionMessageSchema,
+      ]),
+    },
+    _process_coordinator_created_message: {
+      args: {
+        message: SubscriptionCreatedMessageSchema,
+      },
+      returns: z.union([
+        z.instanceof(GuardianError),
+        SubscriptionCreatedMessageSchema,
+      ]),
+    },
+    process_message: {
+      args: {
+        message: PrefilterMessageSchema,
+      },
+      returns: z.union([z.instanceof(GuardianError), FilteredMessageSchema]),
     },
   };
 
@@ -286,20 +317,12 @@ export class Guardian {
     );
   }
 
-  /**
-   * Filters off-chain job messages (off-chain creation and delivery).
-   *
-   * Filters:
-   * 1. Checks if at least 1 container ID is present in message.
-   * 2. Checks if any message container IDs are unsupported.
-   * 3. Checks if request IP is allowed for container.
-   * 4. Checks if first container ID is external container.
-   * 5. Checks if the last container in the pipeline generates a proof if the
-   *    message requires one.
-   */
+  // Filters off-chain job messages (off-chain creation and delivery).
   #process_offchain_message(
-    message: OffchainJobMessage
-  ): GuardianError | OffchainJobMessage {
+    message: z.infer<
+      typeof Guardian.methodSchemas._process_offchain_message.args.message
+    >
+  ): z.infer<typeof Guardian.methodSchemas._process_offchain_message.returns> {
     if (!message.containers.length)
       return this.#error(message, 'No containers specified');
 
@@ -308,11 +331,11 @@ export class Guardian {
 
       // Filter out containers that are not supported.
       if (!this.#restrictions[container])
-        return this.#error(message, 'Container not supported', container);
+        return this.#error(message, 'Container not supported.', container);
 
       // Filter out containers that are not allowed for the IP.
       if (!this.#is_allowed_ip(container, message.ip))
-        return this.#error(message, 'Container not allowed for address', {
+        return this.#error(message, 'Container not allowed for address.', {
           container,
           address: message.ip,
         });
@@ -333,30 +356,17 @@ export class Guardian {
         container: lastContainer,
       });
 
-    return message;
+    return Guardian.methodSchemas._error.returns.parse(message);
   }
 
-  /**
-   * Filters delegated Subscription messages (off-chain creation, on-chain delivery).
-   *
-   * Filters:
-   * 1. Checks if chain module is enabled.
-   * 2. Signature checks:
-   *    2.1. Checks that signature expiry is valid.
-   * 3. Checks if at least 1 container ID is present in subscription.
-   * 4. Checks if subscription owner is in allowed addresses.
-   * 5. Checks if first container ID is external container.
-   * 6. Checks if any subscription container IDs are unsupported.
-   * 7. Checks if subscription requires proof but the last container in their
-   * pipeline does not generate one.
-   *
-   * Non-filters:
-   * 1. Does not check if signature itself is valid (handled by processor).
-   * 2. Does not check if owner has delegated a signer (handled by processor).
-   */
+  // Filters delegated Subscription messages (off-chain creation, on-chain delivery).
   #process_delegated_subscription_message(
-    message: DelegatedSubscriptionMessage
-  ): GuardianError | DelegatedSubscriptionMessage {
+    message: z.infer<
+      typeof Guardian.methodSchemas._process_delegated_subscription_message.args.message
+    >
+  ): z.infer<
+    typeof Guardian.methodSchemas._process_delegated_subscription_message.returns
+  > {
     // Filter out if chain not enabled.
     if (!this.#chain_enabled)
       return this.#error(message, 'Chain not enabled', {
@@ -405,24 +415,19 @@ export class Guardian {
         container: lastContainer,
       });
 
-    return message;
+    return Guardian.methodSchemas._process_delegated_subscription_message.returns.parse(
+      message
+    );
   }
 
-  /**
-   * Filters on-chain Coordinator subscription creation messages.
-   *
-   * Filters:
-   * 1. Checks if subscription is complete.
-   * 2. Checks if at least 1 container ID is present in subscription.
-   * 3. Checks if first container ID is external container.
-   * 4. Checks if any subscription container IDs are unsupported.
-   * 5. Checks if subscription owner is in allowed addresses.
-   * 6. Checks if subscription requires proof but the last container in their
-   *    pipeline does not generate one.
-   */
+  // Filters on-chain Coordinator subscription creation messages.
   #process_coordinator_created_message(
-    message: SubscriptionCreatedMessage
-  ): GuardianError | SubscriptionCreatedMessage {
+    message: z.infer<
+      typeof Guardian.methodSchemas._process_coordinator_created_message.args.message
+    >
+  ): z.infer<
+    typeof Guardian.methodSchemas._process_coordinator_created_message.returns
+  > {
     const { subscription } = message;
 
     if (subscription.completed)
@@ -472,26 +477,36 @@ export class Guardian {
         subscription_id: subscription.id,
       });
 
-    return message;
+    return Guardian.methodSchemas._process_coordinator_created_message.returns.parse(
+      message
+    );
   }
 
-  /**
-   * Public method to parse and filter message.
-   *
-   * Routes message to appropriate filter method based on message type.
-   */
-  process_message(message: PrefilterMessage): GuardianError | FilteredMessage {
+  // Routes messages to the appropriate filter method based on message type.
+  process_message(
+    message: z.infer<typeof Guardian.methodSchemas.process_message.args.message>
+  ): z.infer<typeof Guardian.methodSchemas.process_message.returns> {
+    let results;
+
     switch (message.type) {
       case MessageType.OffchainJob:
-        return this.#process_offchain_message(message as OffchainJobMessage);
+        results = this.#process_offchain_message(message as OffchainJobMessage);
+
+        break;
       case MessageType.DelegatedSubscription:
-        return this.#process_delegated_subscription_message(
+        results = this.#process_delegated_subscription_message(
           message as DelegatedSubscriptionMessage
         );
+
+        break;
       case MessageType.SubscriptionCreated:
-        return this.#process_coordinator_created_message(message);
+        results = this.#process_coordinator_created_message(message);
+
+        break;
       default:
-        return this.#error(message, 'Not supported', { raw: message });
+        results = this.#error(message, 'Not supported', { raw: message });
     }
+
+    return Guardian.methodSchemas.process_message.returns.parse(results);
   }
 }
