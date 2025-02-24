@@ -1,5 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/orchestration/guardian.py.
-import ipaddr, { IPv4, IPv6 } from 'ipaddr.js';
+import { z } from 'zod';
 import { Address4, Address6 } from 'ip-address';
 import { cloneDeep } from 'lodash';
 import { ContainerLookup } from '../chain';
@@ -15,10 +15,34 @@ import {
   SubscriptionCreatedMessage,
 } from '../shared/message';
 import { getUnixTimestamp } from '../utils/helpers';
+import { AddressSchema } from '../shared/schemas';
+
+export const IPv4Schema = z.custom<Address4>();
+
+export const IPv6Schema = z.custom<Address6>();
+
+export const ContainerRestrictionsSchema = z
+  .object({
+    allowed_ips: z.union([IPv4Schema, IPv6Schema]).array(),
+    allowed_addresses: AddressSchema.array(),
+    allowed_delegate_addresses: AddressSchema.array(),
+    external: z.boolean(),
+    generates_proofs: z.boolean(),
+  })
+  .strict();
+
+export type IPv4Type = z.infer<typeof IPv4Schema>;
+
+export type IPv6Type = z.infer<typeof IPv6Schema>;
+
+export type ContainerRestrictions = z.infer<typeof ContainerRestrictionsSchema>;
 
 // Helper which replicates Python's `ipaddress.ip_network` functionality.
 // Reference: https://docs.python.org/3/library/ipaddress.html#ipaddress.ip_network.
-const getIpNetwork = (address: string, strict: boolean = false) => {
+const getIpNetwork = (
+  address: string,
+  strict: boolean
+): IPv4Type | IPv6Type => {
   // Identify whether the address is an IPv4 address.
   const isV4 = Address4.isValid(address);
 
@@ -31,16 +55,10 @@ const getIpNetwork = (address: string, strict: boolean = false) => {
   // The new IP address with the host bits zeroed out.
   const newAddress = `${startAddress}/${_address.parsedSubnet}`;
 
-  return isV4 ? new Address4(newAddress) : new Address6(newAddress);
+  return isV4
+    ? IPv4Schema.parse(new Address4(newAddress))
+    : IPv6Schema.parse(new Address6(newAddress));
 };
-
-export interface ContainerRestrictions {
-  allowed_ips: [IPv4 | IPv6, number][];
-  allowed_addresses: string[];
-  allowed_delegate_addresses: string[];
-  external: boolean;
-  generates_proofs: boolean;
-}
 
 export class Guardian {
   #chain_enabled: boolean;
@@ -73,16 +91,12 @@ export class Guardian {
         }
       ) => {
         const restriction: ContainerRestrictions = {
-          allowed_ips: allowed_ips.map((ip) =>
-            // Returns an object representing the IP address, or throws an `Error` if the
-            // passed string is not a valid representation of an IP address.
-            ipaddr.parseCIDR(ip)
-          ),
+          allowed_ips: allowed_ips.map((ip) => getIpNetwork(ip, false)),
           allowed_addresses: allowed_addresses.map((address) =>
-            address.toLowerCase()
+            AddressSchema.parse(address.toLowerCase())
           ),
           allowed_delegate_addresses: allowed_delegate_addresses.map(
-            (address) => address.toLowerCase()
+            (address) => AddressSchema.parse(address.toLowerCase())
           ),
           external,
           generates_proofs,
@@ -139,11 +153,27 @@ export class Guardian {
   #is_allowed_ip(container: string, address: string): boolean {
     if (!this.#restrictions[container].allowed_ips.length) return true;
 
-    const ipAddress = ipaddr.parse(address);
+    const isV4 = Address4.isValid(address);
+    const addressBN = (
+      isV4 ? new Address4(address) : new Address6(address)
+    ).bigInt();
 
-    return !!this.#restrictions[container].allowed_ips.find(([ipNetwork]) =>
-      ipNetwork.match(ipAddress)
-    );
+    return !!this.#restrictions[container].allowed_ips.find((ipNetwork) => {
+      const ipNetworkIsV4 = Address4.isValid(ipNetwork.address);
+
+      if ((isV4 && !ipNetworkIsV4) || (!isV4 && ipNetworkIsV4))
+        throw new Error('IP version mismatch.');
+
+      // Convert IP addresses to their numeric values, and check whether the address is in range.
+      const networkStartAddressBN = ipNetwork.startAddress().bigInt();
+      const networkEndAddressBN = ipNetwork.endAddress().bigInt();
+
+      if (
+        networkStartAddressBN <= addressBN &&
+        addressBN <= networkEndAddressBN
+      )
+        return true;
+    });
   }
 
   /**
