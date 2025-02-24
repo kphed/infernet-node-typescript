@@ -1,5 +1,6 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/orchestration/guardian.py.
 import ipaddr, { IPv4, IPv6 } from 'ipaddr.js';
+import { Address4, Address6 } from 'ip-address';
 import { cloneDeep } from 'lodash';
 import { ContainerLookup } from '../chain';
 import { WalletChecker } from '../chain';
@@ -14,6 +15,24 @@ import {
   SubscriptionCreatedMessage,
 } from '../shared/message';
 import { getUnixTimestamp } from '../utils/helpers';
+
+// Helper which replicates Python's `ipaddress.ip_network` functionality.
+// Reference: https://docs.python.org/3/library/ipaddress.html#ipaddress.ip_network.
+const getIpNetwork = (address: string, strict: boolean = false) => {
+  // Identify whether the address is an IPv4 address.
+  const isV4 = Address4.isValid(address);
+
+  const _address = isV4 ? new Address4(address) : new Address6(address);
+  const startAddress = _address.startAddress().address;
+
+  if (strict && _address.addressMinusSuffix !== startAddress)
+    throw new Error('Network has host bits set.');
+
+  // The new IP address with the host bits zeroed out.
+  const newAddress = `${startAddress}/${_address.parsedSubnet}`;
+
+  return isV4 ? new Address4(newAddress) : new Address6(newAddress);
+};
 
 export interface ContainerRestrictions {
   allowed_ips: [IPv4 | IPv6, number][];
