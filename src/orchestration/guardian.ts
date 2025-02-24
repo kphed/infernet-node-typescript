@@ -61,55 +61,59 @@ const getIpNetwork = (
 };
 
 export class Guardian {
-  #chain_enabled: boolean;
-  #container_lookup: ContainerLookup;
-  #wallet_checker?: WalletChecker;
-  #restrictions: {
-    [key: string]: ContainerRestrictions;
+  static fieldSchemas = {
+    _chain_enabled: z.boolean(),
+    _container_lookup: z.instanceof(ContainerLookup),
+    _wallet_checker: z.instanceof(WalletChecker).optional(),
+    _restrictions: z.record(ContainerRestrictionsSchema),
   };
 
-  constructor(
-    configs: InfernetContainer[],
-    chain_enabled: boolean,
-    container_lookup: ContainerLookup,
-    wallet_checker?: WalletChecker
-  ) {
-    this.#chain_enabled = chain_enabled;
-    this.#container_lookup = container_lookup;
-    this.#wallet_checker = wallet_checker;
+  #chain_enabled: z.infer<typeof Guardian.fieldSchemas._chain_enabled>;
+  #container_lookup: z.infer<typeof Guardian.fieldSchemas._container_lookup>;
+  #wallet_checker?: z.infer<typeof Guardian.fieldSchemas._wallet_checker>;
+  #restrictions: z.infer<typeof Guardian.fieldSchemas._restrictions>;
 
-    this.#restrictions = configs.reduce(
-      (
-        acc,
-        {
-          id,
-          allowed_ips,
-          allowed_addresses,
-          allowed_delegate_addresses,
-          external,
-          generates_proofs,
+  constructor(configs, chain_enabled, container_lookup, wallet_checker?) {
+    this.#chain_enabled =
+      Guardian.fieldSchemas._chain_enabled.parse(chain_enabled);
+    this.#container_lookup =
+      Guardian.fieldSchemas._container_lookup.parse(container_lookup);
+    this.#wallet_checker =
+      Guardian.fieldSchemas._wallet_checker.parse(wallet_checker);
+    this.#restrictions = Guardian.fieldSchemas._restrictions.parse(
+      configs.reduce(
+        (
+          acc,
+          {
+            id,
+            allowed_ips,
+            allowed_addresses,
+            allowed_delegate_addresses,
+            external,
+            generates_proofs,
+          }
+        ) => {
+          const restriction: ContainerRestrictions = {
+            allowed_ips: allowed_ips.map((ip) => getIpNetwork(ip, false)),
+            allowed_addresses: allowed_addresses.map((address) =>
+              AddressSchema.parse(address.toLowerCase())
+            ),
+            allowed_delegate_addresses: allowed_delegate_addresses.map(
+              (address) => AddressSchema.parse(address.toLowerCase())
+            ),
+            external,
+            generates_proofs,
+          };
+
+          return {
+            ...acc,
+            [id]: restriction,
+          };
+        },
+        {} as {
+          [key: string]: ContainerRestrictions;
         }
-      ) => {
-        const restriction: ContainerRestrictions = {
-          allowed_ips: allowed_ips.map((ip) => getIpNetwork(ip, false)),
-          allowed_addresses: allowed_addresses.map((address) =>
-            AddressSchema.parse(address.toLowerCase())
-          ),
-          allowed_delegate_addresses: allowed_delegate_addresses.map(
-            (address) => AddressSchema.parse(address.toLowerCase())
-          ),
-          external,
-          generates_proofs,
-        };
-
-        return {
-          ...acc,
-          [id]: restriction,
-        };
-      },
-      {} as {
-        [key: string]: ContainerRestrictions;
-      }
+      )
     );
 
     console.debug('Initialized Guardian');
