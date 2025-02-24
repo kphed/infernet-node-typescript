@@ -1,10 +1,8 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/orchestration/guardian.py.
 import { z } from 'zod';
 import { Address4, Address6 } from 'ip-address';
-import { cloneDeep } from 'lodash';
 import { ContainerLookup } from '../chain';
 import { WalletChecker } from '../chain';
-import { InfernetContainer } from '../shared/config';
 import {
   DelegatedSubscriptionMessage,
   FilteredMessage,
@@ -13,6 +11,7 @@ import {
   OffchainJobMessage,
   PrefilterMessage,
   SubscriptionCreatedMessage,
+  PrefilterMessageSchema,
 } from '../shared/message';
 import { getUnixTimestamp } from '../utils/helpers';
 import { AddressSchema } from '../shared/schemas';
@@ -68,6 +67,50 @@ export class Guardian {
     _restrictions: z.record(ContainerRestrictionsSchema),
   };
 
+  static methodSchemas = {
+    wallet_checker: {
+      returns: this.fieldSchemas._wallet_checker,
+    },
+    restrictions: {
+      returns: this.fieldSchemas._restrictions,
+    },
+    _is_external: {
+      args: {
+        container: z.string(),
+      },
+      returns: z.boolean(),
+    },
+    _generates_proof: {
+      args: {
+        container: z.string(),
+      },
+      returns: z.boolean(),
+    },
+    _is_allowed_ip: {
+      args: {
+        container: z.string(),
+        address: z.string(),
+      },
+      returns: z.boolean(),
+    },
+    _is_allowed_address: {
+      args: {
+        container: z.string(),
+        address: z.string(),
+        onchain: z.boolean(),
+      },
+      returns: z.boolean(),
+    },
+    _error: {
+      args: {
+        message: PrefilterMessageSchema,
+        error: z.string(),
+        params: z.any().optional(),
+      },
+      returns: z.instanceof(GuardianError),
+    },
+  };
+
   #chain_enabled: z.infer<typeof Guardian.fieldSchemas._chain_enabled>;
   #container_lookup: z.infer<typeof Guardian.fieldSchemas._container_lookup>;
   #wallet_checker?: z.infer<typeof Guardian.fieldSchemas._wallet_checker>;
@@ -119,42 +162,55 @@ export class Guardian {
     console.debug('Initialized Guardian');
   }
 
-  /**
-   * Wallet checker getter, unpacks the optional `#wallet_checker` attribute, check
-   * if it is undefined and throws an error if it is.
-   */
-  get wallet_checker(): WalletChecker {
+  // Returns a deep clone of `#wallet_checker`.
+  get wallet_checker(): z.infer<
+    typeof Guardian.methodSchemas.wallet_checker.returns
+  > {
     if (!this.#wallet_checker)
       throw new Error('Wallet checker not provided when chain is disabled.');
 
-    return this.#wallet_checker;
+    return Guardian.methodSchemas.wallet_checker.returns.parse(
+      this.#wallet_checker
+    );
   }
 
-  /**
-   * Returns a deep copy of `#restrictions`.
-   */
-  get restrictions(): { [key: string]: ContainerRestrictions } {
-    return cloneDeep(this.#restrictions);
+  // Returns a deep clone of `#restrictions`.
+  get restrictions(): z.infer<
+    typeof Guardian.methodSchemas.restrictions.returns
+  > {
+    return Guardian.methodSchemas.restrictions.returns.parse(
+      this.#restrictions
+    );
   }
 
-  /**
-   * Returns whether a container is external.
-   */
-  #is_external(container: string): boolean {
+  // Returns whether a container is external.
+  #is_external(
+    container: z.infer<
+      typeof Guardian.methodSchemas._is_external.args.container
+    >
+  ): z.infer<typeof Guardian.methodSchemas._is_external.returns> {
     return this.#restrictions[container].external;
   }
 
-  /**
-   * Returns whether a container generates proofs.
-   */
-  #generates_proof(container: string): boolean {
-    return this.#restrictions[container].generates_proofs;
+  // Returns whether a container generates proofs.
+  #generates_proof(
+    container: z.infer<
+      typeof Guardian.methodSchemas._generates_proof.args.container
+    >
+  ): z.infer<typeof Guardian.methodSchemas._generates_proof.returns> {
+    return Guardian.methodSchemas._generates_proof.returns.parse(
+      this.#restrictions[container].generates_proofs
+    );
   }
 
-  /**
-   * Returns whether an IP address is allowed for a container.
-   */
-  #is_allowed_ip(container: string, address: string): boolean {
+  // Returns whether an IP address is allowed for a container.
+  #is_allowed_ip(
+    container: z.infer<
+      typeof Guardian.methodSchemas._is_allowed_ip.args.container
+    >,
+    address: z.infer<typeof Guardian.methodSchemas._is_allowed_ip.args.address>
+  ): z.infer<typeof Guardian.methodSchemas._is_allowed_ip.returns> {
+    // Allow all IPs if there are no restrictions specified.
     if (!this.#restrictions[container].allowed_ips.length) return true;
 
     const isV4 = Address4.isValid(address);
@@ -162,56 +218,72 @@ export class Guardian {
       isV4 ? new Address4(address) : new Address6(address)
     ).bigInt();
 
-    return !!this.#restrictions[container].allowed_ips.find((ipNetwork) => {
-      const ipNetworkIsV4 = Address4.isValid(ipNetwork.address);
+    return Guardian.methodSchemas._is_allowed_ip.returns.parse(
+      !!this.#restrictions[container].allowed_ips.find((ipNetwork) => {
+        const ipNetworkIsV4 = Address4.isValid(ipNetwork.address);
 
-      if ((isV4 && !ipNetworkIsV4) || (!isV4 && ipNetworkIsV4))
-        throw new Error('IP version mismatch.');
+        if ((isV4 && !ipNetworkIsV4) || (!isV4 && ipNetworkIsV4))
+          throw new Error('IP version mismatch.');
 
-      // Convert IP addresses to their numeric values, and check whether the address is in range.
-      const networkStartAddressBN = ipNetwork.startAddress().bigInt();
-      const networkEndAddressBN = ipNetwork.endAddress().bigInt();
+        // Convert IP addresses to their numeric values, and check whether the address is in range.
+        const networkStartAddressBN = ipNetwork.startAddress().bigInt();
+        const networkEndAddressBN = ipNetwork.endAddress().bigInt();
 
-      if (
-        networkStartAddressBN <= addressBN &&
-        addressBN <= networkEndAddressBN
-      )
-        return true;
-    });
-  }
-
-  /**
-   * Returns whether onchain address is allowed for container.
-   */
-  #is_allowed_address(
-    container: string,
-    address: string,
-    onchain: boolean
-  ): boolean {
-    let restrictions;
-
-    if (onchain) {
-      restrictions = this.#restrictions[container].allowed_addresses;
-    } else {
-      restrictions = this.#restrictions[container].allowed_delegate_addresses;
-    }
-
-    if (!restrictions.length) return true;
-
-    return !!restrictions.find(
-      (allowedAddress) => allowedAddress === address.toLowerCase()
+        if (
+          networkStartAddressBN <= addressBN &&
+          addressBN <= networkEndAddressBN
+        )
+          return true;
+      })
     );
   }
 
-  /**
-   * Create error message for given message id.
-   */
+  // Returns whether onchain address is allowed for container.
+  #is_allowed_address(
+    container: z.infer<
+      typeof Guardian.methodSchemas._is_allowed_address.args.container
+    >,
+    address: z.infer<
+      typeof Guardian.methodSchemas._is_allowed_address.args.address
+    >,
+    onchain: z.infer<
+      typeof Guardian.methodSchemas._is_allowed_address.args.onchain
+    >
+  ): z.infer<typeof Guardian.methodSchemas._is_allowed_address.returns> {
+    let restrictedAddresses;
+
+    // Select address restrictions list based on message origination.
+    if (onchain) {
+      restrictedAddresses =
+        ContainerRestrictionsSchema.shape.allowed_addresses.parse(
+          this.#restrictions[container].allowed_addresses
+        );
+    } else {
+      restrictedAddresses =
+        ContainerRestrictionsSchema.shape.allowed_delegate_addresses.parse(
+          this.#restrictions[container].allowed_delegate_addresses
+        );
+    }
+
+    // Allow all addresses if there are no restrictions specified.
+    if (!restrictedAddresses.length) return true;
+
+    return Guardian.methodSchemas._is_allowed_address.returns.parse(
+      !!restrictedAddresses.find(
+        (allowedAddress) => allowedAddress === address.toLowerCase()
+      )
+    );
+  }
+
+  // Create error message for a given message id.
   #error(
-    message: PrefilterMessage,
-    error: string,
-    params?: any
-  ): GuardianError {
-    return new GuardianError(message, error, params);
+    message: z.infer<typeof Guardian.methodSchemas._error.args.message>,
+    error: z.infer<typeof Guardian.methodSchemas._error.args.error>,
+    params?: z.infer<typeof Guardian.methodSchemas._error.args.params>
+  ): z.infer<typeof Guardian.methodSchemas._error.returns> {
+    return Guardian.methodSchemas._error.returns.parse(
+      new GuardianError(message, error, params)
+    );
   }
 
   /**
@@ -392,7 +464,10 @@ export class Guardian {
       });
 
     // Filter out subscriptions that don't match payment requirements.
-    if (!this.wallet_checker.matches_payment_requirements(subscription))
+    if (
+      this.wallet_checker &&
+      !this.wallet_checker.matches_payment_requirements(subscription)
+    )
       return this.#error(message, 'Invalid payment', {
         subscription_id: subscription.id,
       });
