@@ -1,11 +1,22 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/chain/containerLookup.py.
-import { keccak256, encodeAbiParameters, Hex } from 'viem';
-import { InfernetContainer } from '../shared/config';
+import { z } from 'zod';
+import { keccak256, encodeAbiParameters } from 'viem';
+import { HexSchema } from '../shared/schemas';
+
+const GetAllCommaSeparatedPermutationsSchema = z
+  .function()
+  .args(z.string().array())
+  .returns(z.string().array());
+
+const ComputePermutationHashSchema = z
+  .function()
+  .args(z.string())
+  .returns(HexSchema);
 
 // Generate container ID permutations (comma-separated). E.g. ['hello', 'world', 'hello,world', 'world,hello'].
-export const getAllCommaSeparatedPermutations = (
-  containers: string[]
-): string[] => {
+export const getAllCommaSeparatedPermutations: z.infer<
+  typeof GetAllCommaSeparatedPermutationsSchema
+> = (containers) => {
   // Based on: https://docs.python.org/3/library/itertools.html#itertools.permutations.
   const permutations = <T>(
     iterable: T[] | string,
@@ -55,26 +66,43 @@ export const getAllCommaSeparatedPermutations = (
 };
 
 // ABI-encode and hash a container ID permutation.
-export const computePermutationHash = (permutation: string): Hex =>
+export const computePermutationHash: z.infer<
+  typeof ComputePermutationHashSchema
+> = (permutation) =>
   keccak256(encodeAbiParameters([{ type: 'string' }], [permutation]));
 
 export class ContainerLookup {
-  #containerLookup: {
-    [key: string]: string[];
-  } = {};
+  static fieldSchemas = {
+    _containerLookup: z.record(z.string().array()),
+  };
 
-  constructor(configs: InfernetContainer[]) {
+  static methodSchemas = {
+    get_containers: {
+      args: {
+        hash: z.string(),
+      },
+      returns: z.string().array(),
+    },
+  };
+
+  #containerLookup: z.infer<
+    typeof ContainerLookup.fieldSchemas._containerLookup
+  >;
+
+  constructor(configs) {
     const permutations: string[] = getAllCommaSeparatedPermutations(
       configs.map(({ id }) => id)
     );
 
-    this.#containerLookup = permutations.reduce(
-      (acc, permutation) => ({
-        ...acc,
-        // E.g. computePermutationHash('hello,world'): ['hello', 'world'].
-        [computePermutationHash(permutation)]: permutation.split(','),
-      }),
-      {}
+    this.#containerLookup = ContainerLookup.fieldSchemas._containerLookup.parse(
+      permutations.reduce(
+        (acc, permutation) => ({
+          ...acc,
+          // E.g. computePermutationHash('hello,world'): ['hello', 'world'].
+          [computePermutationHash(permutation)]: permutation.split(','),
+        }),
+        {}
+      )
     );
 
     console.log(
@@ -83,7 +111,11 @@ export class ContainerLookup {
   }
 
   // Look up a set of containers by their hash.
-  get_containers(hash: string): string[] {
-    return this.#containerLookup[hash] ?? [];
+  get_containers(
+    hash: z.infer<typeof ContainerLookup.methodSchemas.get_containers.args.hash>
+  ): z.infer<typeof ContainerLookup.methodSchemas.get_containers.returns> {
+    return ContainerLookup.methodSchemas.get_containers.returns.parse(
+      this.#containerLookup[hash] ?? []
+    );
   }
 }

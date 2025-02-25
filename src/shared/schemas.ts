@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isAddress } from 'viem';
+import { isAddress, Hex } from 'viem';
 
 export const AddressSchema = z
   .string()
@@ -15,6 +15,6 @@ export const ChecksumAddressSchema = z
     message: 'Not a valid checksum address.',
   });
 
-export const HexSchema = z.custom<`0x${string}`>((val) => {
+export const HexSchema = z.custom<Hex>((val) => {
   return typeof val === 'string' ? val.substring(0, 2) === '0x' : false;
 });
