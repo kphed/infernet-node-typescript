@@ -550,7 +550,8 @@ export class ChainProcessor extends AsyncTask {
    */
   async #stop_tracking_if_cancelled(sub_id: SubscriptionID): Promise<boolean> {
     const sub: Subscription = await this.#coordinator.get_subscription_by_id(
-      sub_id
+      sub_id,
+      0n
     );
 
     if (sub.cancelled) {
@@ -625,7 +626,7 @@ export class ChainProcessor extends AsyncTask {
     const { id } = subscription;
     const interval = subscription.interval;
     const responseCount =
-      await this.#coordinator.get_subscription_response_count(id, interval);
+      await this.#coordinator.get_subscription_response_count(id, interval, 0n);
 
     subscription.set_response_count(interval, responseCount);
 

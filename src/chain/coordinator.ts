@@ -11,6 +11,7 @@ import {
   recoverAddress,
   SimulateContractReturnType,
   WriteContractReturnType,
+  ReadContractReturnType,
   toHex,
 } from 'viem';
 import { RPC } from './rpc';
@@ -101,97 +102,69 @@ export class Coordinator {
   };
 
   static methodSchemas = {
-    get_event_hashes: {
-      returns: z.record(HexSchema),
-    },
-    get_delegated_signer: {
-      args: {
-        subscription: z.instanceof(Subscription),
-        block_number: BlockNumberSchema,
-      },
-      returns: AddressSchema,
-    },
-    get_existing_delegate_subscription: {
-      args: {
-        subscription: z.instanceof(Subscription),
-        signature: CoordinatorSignatureParamsSchema,
-        block_number: BlockNumberSchema,
-      },
-      returns: z.tuple([z.boolean(), z.number()]),
-    },
-    recover_delegatee_signer: {
-      args: {
-        subscription: z.instanceof(Subscription),
-        signature: CoordinatorSignatureParamsSchema,
-      },
-      returns: AddressSchema,
-    },
-    get_deliver_compute_tx_contract_function: {
-      args: {
-        data: CoordinatorDeliveryParamsSchema,
-      },
-      returns: z
-        .function()
-        .args(z.any())
-        .returns(z.promise(z.custom<SimulateContractReturnType>())),
-    },
-    get_deliver_compute_delegatee_tx_contract_function: {
-      args: {
-        data: CoordinatorDeliveryParamsSchema,
-        signature: CoordinatorSignatureParamsSchema,
-      },
-      returns: z
-        .function()
-        .args(z.any())
-        .returns(z.promise(z.custom<SimulateContractReturnType>())),
-    },
-    get_deliver_compute_delegatee_tx: {
-      args: {
-        data: CoordinatorDeliveryParamsSchema,
-        tx_params: CoordinatorTxParamsSchema,
-        signature: CoordinatorSignatureParamsSchema,
-      },
-      returns: z.custom<WriteContractReturnType>(),
-    },
-    get_head_subscription_id: {
-      args: {
-        block_number: BlockNumberSchema,
-      },
-      returns: z.number(),
-    },
-    get_subscription_by_id: {
-      args: {
-        subscription_id: z.number(),
-        block_number: BlockNumberSchema.optional(),
-      },
-      returns: z.instanceof(Subscription),
-    },
-    get_container_inputs: {
-      args: {
-        subscription: z.instanceof(Subscription),
-        interval: z.number(),
-        timestamp: z.number(),
-        caller: AddressSchema,
-      },
-      returns: HexSchema,
-    },
-    get_node_has_delivered_response: {
-      args: {
-        subscription_id: z.number(),
-        interval: z.number(),
-        node_address: AddressSchema,
-        block_number: BlockNumberSchema,
-      },
-      returns: z.boolean(),
-    },
-    get_subscription_response_count: {
-      args: {
-        subscription_id: z.number(),
-        interval: z.number(),
-        block_number: BlockNumberSchema.optional(),
-      },
-      returns: z.number(),
-    },
+    get_event_hashes: z.function().returns(z.record(HexSchema)),
+    get_delegated_signer: z
+      .function()
+      .args(z.instanceof(Subscription), BlockNumberSchema)
+      .returns(z.promise(AddressSchema)),
+    get_existing_delegate_subscription: z
+      .function()
+      .args(
+        z.instanceof(Subscription),
+        CoordinatorSignatureParamsSchema,
+        BlockNumberSchema
+      )
+      .returns(z.promise(z.tuple([z.boolean(), z.number()]))),
+    recover_delegatee_signer: z
+      .function()
+      .args(z.instanceof(Subscription), CoordinatorSignatureParamsSchema)
+      .returns(z.promise(AddressSchema)),
+    get_deliver_compute_tx_contract_function: z
+      .function()
+      .args(z.any())
+      .returns(
+        z
+          .function()
+          .args(z.any())
+          .returns(z.promise(z.custom<SimulateContractReturnType>()))
+      ),
+    get_deliver_compute_delegatee_tx_contract_function: z
+      .function()
+      .args(CoordinatorDeliveryParamsSchema, CoordinatorSignatureParamsSchema)
+      .returns(
+        z
+          .function()
+          .args(z.any())
+          .returns(z.promise(z.custom<SimulateContractReturnType>()))
+      ),
+    get_deliver_compute_delegatee_tx: z
+      .function()
+      .args(
+        CoordinatorDeliveryParamsSchema,
+        CoordinatorTxParamsSchema,
+        CoordinatorSignatureParamsSchema
+      )
+      .returns(z.promise(z.custom<WriteContractReturnType>())),
+    get_head_subscription_id: z
+      .function()
+      .args(BlockNumberSchema)
+      .returns(z.promise(z.number())),
+    get_subscription_by_id: z
+      .function()
+      .args(z.number(), BlockNumberSchema.optional())
+      .returns(z.promise(z.instanceof(Subscription))),
+    get_container_inputs: z
+      .function()
+      .args(z.instanceof(Subscription), z.number(), z.number(), AddressSchema)
+      .returns(z.promise(HexSchema)),
+    get_node_has_delivered_response: z
+      .function()
+      .args(z.number(), z.number(), AddressSchema, BlockNumberSchema)
+      .returns(z.promise(z.boolean())),
+    get_subscription_response_count: z
+      .function()
+      .args(z.number(), z.number(), BlockNumberSchema.optional())
+      .returns(z.promise(z.number())),
   };
 
   #rpc: z.infer<typeof Coordinator.fieldSchemas._rpc>;
@@ -218,121 +191,83 @@ export class Coordinator {
   }
 
   // Returns an object with "event name" keys with corresponding hash values.
-  get_event_hashes(): z.infer<
-    typeof Coordinator.methodSchemas.get_event_hashes.returns
-  > {
-    return Coordinator.methodSchemas.get_event_hashes.returns.parse(
-      coordinatorEventHashes
-    );
-  }
+  get_event_hashes = Coordinator.methodSchemas.get_event_hashes.implement(
+    () => coordinatorEventHashes
+  );
 
   // Collects delegated signer from subscription consumer inheriting Delegator.sol.
-  async get_delegated_signer(
-    subscription: z.infer<
-      typeof Coordinator.methodSchemas.get_delegated_signer.args.subscription
-    >,
-    block_number: z.infer<
-      typeof Coordinator.methodSchemas.get_delegated_signer.args.block_number
-    >
-  ): Promise<
-    z.infer<typeof Coordinator.methodSchemas.get_delegated_signer.returns>
-  > {
-    const delegator = this.#rpc.get_contract(
-      subscription.owner,
-      DELEGATED_SIGNER_ABI
+  get_delegated_signer =
+    Coordinator.methodSchemas.get_delegated_signer.implement(
+      async (subscription, block_number) => {
+        const delegator = this.#rpc.get_contract(
+          subscription.owner,
+          DELEGATED_SIGNER_ABI
+        );
+        let signer;
+
+        try {
+          signer = await delegator.read.getSigner(
+            block_number
+              ? {
+                  blockNumber: block_number,
+                }
+              : {}
+          );
+        } catch (err) {
+          signer = await ZERO_ADDRESS;
+        }
+
+        return signer;
+      }
     );
-    let signer;
-
-    try {
-      signer = await delegator.read.getSigner(
-        block_number
-          ? {
-              blockNumber: block_number,
-            }
-          : {}
-      );
-    } catch (err) {
-      signer = await ZERO_ADDRESS;
-    }
-
-    return Coordinator.methodSchemas.get_delegated_signer.returns.parse(signer);
-  }
 
   // Collects subscription ID created by DelegateSubscription, if exists.
-  async get_existing_delegate_subscription(
-    subscription: z.infer<
-      typeof Coordinator.methodSchemas.get_existing_delegate_subscription.args.subscription
-    >,
-    signature: z.infer<
-      typeof Coordinator.methodSchemas.get_existing_delegate_subscription.args.signature
-    >,
-    block_number: z.infer<
-      typeof Coordinator.methodSchemas.get_existing_delegate_subscription.args.block_number
-    >
-  ): Promise<
-    z.infer<
-      typeof Coordinator.methodSchemas.get_existing_delegate_subscription.returns
-    >
-  > {
-    const checksumAddress = RPC.get_checksum_address(subscription.owner);
-    const key = encodeAbiParameters(
-      [{ type: 'address' }, { type: 'uint32' }],
-      [checksumAddress, signature.nonce]
-    );
-    const hash = RPC.get_keccak(['bytes'], [key]);
-    const subscriptionId = await this.#contract.read.delegateCreatedIds(
-      [hash],
-      block_number
-        ? {
-            blockNumber: block_number,
-          }
-        : {}
-    );
+  get_existing_delegate_subscription =
+    Coordinator.methodSchemas.get_existing_delegate_subscription.implement(
+      async (subscription, signature, block_number) => {
+        const checksumAddress = RPC.get_checksum_address(subscription.owner);
+        const key = encodeAbiParameters(
+          [{ type: 'address' }, { type: 'uint32' }],
+          [checksumAddress, signature.nonce]
+        );
+        const hash = RPC.get_keccak(['bytes'], [key]);
+        const subscriptionId = await this.#contract.read.delegateCreatedIds(
+          [hash],
+          block_number
+            ? {
+                blockNumber: block_number,
+              }
+            : {}
+        );
 
-    return Coordinator.methodSchemas.get_existing_delegate_subscription.returns.parse(
-      [subscriptionId !== 0, Number(subscriptionId)]
+        return [subscriptionId !== 0, Number(subscriptionId)];
+      }
     );
-  }
 
   // Recovers delegatee signer from `subscription` and `signature`.
-  async recover_delegatee_signer(
-    subscription: z.infer<
-      typeof Coordinator.methodSchemas.recover_delegatee_signer.args.subscription
-    >,
-    signature: z.infer<
-      typeof Coordinator.methodSchemas.recover_delegatee_signer.args.signature
-    >
-  ): Promise<
-    z.infer<typeof Coordinator.methodSchemas.recover_delegatee_signer.returns>
-  > {
-    return Coordinator.methodSchemas.recover_delegatee_signer.returns.parse(
-      await recoverAddress({
-        // Consider using `yParity` in the future since `v` is deprecated: https://github.com/wevm/viem/blob/main/src/types/misc.ts#L23.
-        signature: serializeSignature({
-          r: bigIntToBytes32(signature.r),
-          s: bigIntToBytes32(signature.s),
-          v: signature.v,
-        }),
-        hash: subscription.get_delegate_subscription_typed_data(
-          signature.nonce,
-          signature.expiry,
-          await this.#rpc.get_chain_id(),
-          this.#checksum_address
-        ),
-      })
+  recover_delegatee_signer =
+    Coordinator.methodSchemas.recover_delegatee_signer.implement(
+      async (subscription, signature) =>
+        recoverAddress({
+          // Consider using `yParity` in the future since `v` is deprecated: https://github.com/wevm/viem/blob/main/src/types/misc.ts#L23.
+          signature: serializeSignature({
+            r: bigIntToBytes32(signature.r),
+            s: bigIntToBytes32(signature.s),
+            v: signature.v,
+          }),
+          hash: subscription.get_delegate_subscription_typed_data(
+            signature.nonce,
+            signature.expiry,
+            await this.#rpc.get_chain_id(),
+            this.#checksum_address
+          ),
+        })
     );
-  }
 
   // Returns a function with method args encapsulated for simulating and calling `Coordinator.deliverCompute`.
-  get_deliver_compute_tx_contract_function(
-    data: z.infer<
-      typeof Coordinator.methodSchemas.get_deliver_compute_tx_contract_function.args.data
-    >
-  ): z.infer<
-    typeof Coordinator.methodSchemas.get_deliver_compute_tx_contract_function.returns
-  > {
-    return Coordinator.methodSchemas.get_deliver_compute_tx_contract_function.returns.parse(
-      (options: any) =>
+  get_deliver_compute_tx_contract_function =
+    Coordinator.methodSchemas.get_deliver_compute_tx_contract_function.implement(
+      (data) => (options: any) =>
         this.#contract.simulate.deliverCompute(
           [
             data.subscription.id,
@@ -345,21 +280,11 @@ export class Coordinator {
           options
         )
     );
-  }
 
   // Returns a function with method args encapsulated for simulating and calling `Coordinator.deliverComputeDelegatee`.
-  get_deliver_compute_delegatee_tx_contract_function(
-    data: z.infer<
-      typeof Coordinator.methodSchemas.get_deliver_compute_delegatee_tx_contract_function.args.data
-    >,
-    signature: z.infer<
-      typeof Coordinator.methodSchemas.get_deliver_compute_delegatee_tx_contract_function.args.signature
-    >
-  ): z.infer<
-    typeof Coordinator.methodSchemas.get_deliver_compute_delegatee_tx_contract_function.returns
-  > {
-    return Coordinator.methodSchemas.get_deliver_compute_delegatee_tx_contract_function.returns.parse(
-      (options: any) =>
+  get_deliver_compute_delegatee_tx_contract_function =
+    Coordinator.methodSchemas.get_deliver_compute_delegatee_tx_contract_function.implement(
+      (data, signature) => (options: any) =>
         this.#contract.simulate.deliverComputeDelegatee(
           [
             signature.nonce,
@@ -377,226 +302,159 @@ export class Coordinator {
           options
         )
     );
-  }
 
   // Generates tx to call `Coordinator.deliverComputeDelegatee`.
-  async get_deliver_compute_delegatee_tx(
-    data: z.infer<
-      typeof Coordinator.methodSchemas.get_deliver_compute_delegatee_tx.args.data
-    >,
-    tx_params: z.infer<
-      typeof Coordinator.methodSchemas.get_deliver_compute_delegatee_tx.args.tx_params
-    >,
-    signature: z.infer<
-      typeof Coordinator.methodSchemas.get_deliver_compute_delegatee_tx.args.signature
-    >
-  ): Promise<
-    z.infer<
-      typeof Coordinator.methodSchemas.get_deliver_compute_delegatee_tx.returns
-    >
-  > {
-    const { request }: any =
-      await this.get_deliver_compute_delegatee_tx_contract_function(
-        data,
-        signature
-      );
+  get_deliver_compute_delegatee_tx =
+    Coordinator.methodSchemas.get_deliver_compute_delegatee_tx.implement(
+      async (data, tx_params, signature) => {
+        const { request }: any =
+          await this.get_deliver_compute_delegatee_tx_contract_function(
+            data,
+            signature
+          );
 
-    return Coordinator.methodSchemas.get_deliver_compute_delegatee_tx.returns.parse(
-      this.#rpc.web3.writeContract({
-        ...request,
-        nonce: tx_params.nonce,
-        from: tx_params.sender,
-        gas: tx_params.gas_limit,
-      })
+        return this.#rpc.web3.writeContract({
+          ...request,
+          nonce: tx_params.nonce,
+          from: tx_params.sender,
+          gas: tx_params.gas_limit,
+        });
+      }
     );
-  }
 
   // Collects the highest subscription ID at block number.
-  async get_head_subscription_id(
-    block_number: z.infer<
-      typeof Coordinator.methodSchemas.get_head_subscription_id.args.block_number
-    >
-  ): Promise<
-    z.infer<typeof Coordinator.methodSchemas.get_head_subscription_id.returns>
-  > {
-    const id = await this.#contract.read.id({
-      blockNumber: block_number,
-    });
+  get_head_subscription_id =
+    Coordinator.methodSchemas.get_head_subscription_id.implement(
+      async (block_number) => {
+        const id = await this.#contract.read.id({
+          blockNumber: block_number,
+        });
 
-    return Coordinator.methodSchemas.get_head_subscription_id.returns.parse(
-      Number(id) - 1
+        return Number(id) - 1;
+      }
     );
-  }
 
   // Collects subscription by ID at block number.
-  async get_subscription_by_id(
-    subscription_id: z.infer<
-      typeof Coordinator.methodSchemas.get_subscription_by_id.args.subscription_id
-    >,
-    block_number?: z.infer<
-      typeof Coordinator.methodSchemas.get_subscription_by_id.args.block_number
-    >
-  ): Promise<
-    z.infer<typeof Coordinator.methodSchemas.get_subscription_by_id.returns>
-  > {
-    const [
-      owner,
-      active_at,
-      period,
-      frequency,
-      redundancy,
-      containers_hash,
-      lazy,
-      verifier,
-      payment_amount,
-      payment_token,
-      wallet,
-    ] = (await this.#contract.read.getSubscription(
-      [subscription_id],
-      // If `block_number === undefined` will use the latest block number by default.
-      block_number
-        ? {
-            blockNumber: block_number,
-          }
-        : {}
-    )) as [
-      Address,
-      number,
-      number,
-      number,
-      number,
-      Hex,
-      boolean,
-      Address,
-      number,
-      Address,
-      Address
-    ];
+  get_subscription_by_id =
+    Coordinator.methodSchemas.get_subscription_by_id.implement(
+      async (subscription_id, block_number) => {
+        const [
+          owner,
+          active_at,
+          period,
+          frequency,
+          redundancy,
+          containers_hash,
+          lazy,
+          verifier,
+          payment_amount,
+          payment_token,
+          wallet,
+        ] = (await this.#contract.read.getSubscription(
+          [subscription_id],
+          // If `block_number === undefined` will use the latest block number by default.
+          block_number !== 0n
+            ? {
+                blockNumber: block_number,
+              }
+            : {}
+        )) as [
+          Address,
+          number,
+          number,
+          number,
+          number,
+          Hex,
+          boolean,
+          Address,
+          number,
+          Address,
+          Address
+        ];
 
-    return Coordinator.methodSchemas.get_subscription_by_id.returns.parse(
-      new Subscription(
-        subscription_id,
-        this.#lookup,
-        owner,
-        active_at,
-        period,
-        frequency,
-        redundancy,
-        containers_hash,
-        lazy,
-        verifier,
-        payment_amount,
-        payment_token,
-        wallet
-      )
+        return new Subscription(
+          subscription_id,
+          this.#lookup,
+          owner,
+          active_at,
+          period,
+          frequency,
+          redundancy,
+          containers_hash,
+          lazy,
+          verifier,
+          payment_amount,
+          payment_token,
+          wallet
+        );
+      }
     );
-  }
 
   // Returns local or remotely-available container inputs by subscription.
-  async get_container_inputs(
-    subscription: z.infer<
-      typeof Coordinator.methodSchemas.get_container_inputs.args.subscription
-    >,
-    interval: z.infer<
-      typeof Coordinator.methodSchemas.get_container_inputs.args.interval
-    >,
-    timestamp: z.infer<
-      typeof Coordinator.methodSchemas.get_container_inputs.args.timestamp
-    >,
-    caller: z.infer<
-      typeof Coordinator.methodSchemas.get_container_inputs.args.caller
-    >
-  ): Promise<
-    z.infer<typeof Coordinator.methodSchemas.get_container_inputs.returns>
-  > {
-    const owner = RPC.get_checksum_address(subscription.owner);
-    const consumer = this.#rpc.get_contract(owner, SUBSCRIPTION_CONSUMER_ABI);
-    let containerInputs;
+  get_container_inputs =
+    Coordinator.methodSchemas.get_container_inputs.implement(
+      async (subscription, interval, timestamp, caller) => {
+        const owner = RPC.get_checksum_address(subscription.owner);
+        const consumer = this.#rpc.get_contract(
+          owner,
+          SUBSCRIPTION_CONSUMER_ABI
+        );
+        let containerInputs;
 
-    try {
-      containerInputs = await consumer.read.getContainerInputs([
-        subscription.id,
-        interval,
-        timestamp,
-        caller,
-      ]);
-    } catch (err) {
-      containerInputs = '0x';
-    }
+        try {
+          containerInputs = await consumer.read.getContainerInputs([
+            subscription.id,
+            interval,
+            timestamp,
+            caller,
+          ]);
+        } catch (err) {
+          containerInputs = '0x';
+        }
 
-    return Coordinator.methodSchemas.get_container_inputs.returns.parse(
-      containerInputs
+        return containerInputs;
+      }
     );
-  }
 
   // Checks whether a node has delivered a response for a subscription ID at current interval.
-  async get_node_has_delivered_response(
-    subscription_id: z.infer<
-      typeof Coordinator.methodSchemas.get_node_has_delivered_response.args.subscription_id
-    >,
-    interval: z.infer<
-      typeof Coordinator.methodSchemas.get_node_has_delivered_response.args.interval
-    >,
-    node_address: z.infer<
-      typeof Coordinator.methodSchemas.get_node_has_delivered_response.args.node_address
-    >,
-    block_number: z.infer<
-      typeof Coordinator.methodSchemas.get_node_has_delivered_response.args.block_number
-    >
-  ): Promise<
-    z.infer<
-      typeof Coordinator.methodSchemas.get_node_has_delivered_response.returns
-    >
-  > {
-    const nodeRespondedKey = encodeAbiParameters(
-      [
-        {
-          type: 'uint32',
-        },
-        {
-          type: 'uint32',
-        },
-        {
-          type: 'address',
-        },
-      ],
-      [subscription_id, interval, node_address]
-    );
-    const hash = RPC.get_keccak(['bytes'], [nodeRespondedKey]);
+  get_node_has_delivered_response =
+    Coordinator.methodSchemas.get_node_has_delivered_response.implement(
+      async (subscription_id, interval, node_address, block_number) => {
+        const nodeRespondedKey = encodeAbiParameters(
+          [
+            {
+              type: 'uint32',
+            },
+            {
+              type: 'uint32',
+            },
+            {
+              type: 'address',
+            },
+          ],
+          [subscription_id, interval, node_address]
+        );
+        const hash = RPC.get_keccak(['bytes'], [nodeRespondedKey]);
 
-    return Coordinator.methodSchemas.get_node_has_delivered_response.returns.parse(
-      await this.#contract.read.nodeResponded([hash], {
-        blockNumber: block_number,
-      })
+        return this.#contract.read.nodeResponded([hash], {
+          blockNumber: block_number,
+        }) as Promise<boolean>;
+      }
     );
-  }
 
   // Collects count(subscription responses) by ID for interval at block number.
-  async get_subscription_response_count(
-    subscription_id: z.infer<
-      typeof Coordinator.methodSchemas.get_subscription_response_count.args.subscription_id
-    >,
-    interval: z.infer<
-      typeof Coordinator.methodSchemas.get_subscription_response_count.args.interval
-    >,
-    block_number?: z.infer<
-      typeof Coordinator.methodSchemas.get_subscription_response_count.args.block_number
-    >
-  ): Promise<
-    z.infer<
-      typeof Coordinator.methodSchemas.get_subscription_response_count.returns
-    >
-  > {
-    const redundancyCountKey = encodeAbiParameters(
-      [{ type: 'uint32' }, { type: 'uint32' }],
-      [subscription_id, interval]
-    );
-    const hash = RPC.get_keccak(['bytes'], [redundancyCountKey]);
+  get_subscription_response_count =
+    Coordinator.methodSchemas.get_subscription_response_count.implement(
+      async (subscription_id, interval, block_number) => {
+        const redundancyCountKey = encodeAbiParameters(
+          [{ type: 'uint32' }, { type: 'uint32' }],
+          [subscription_id, interval]
+        );
+        const hash = RPC.get_keccak(['bytes'], [redundancyCountKey]);
 
-    return Coordinator.methodSchemas.get_subscription_response_count.returns.parse(
-      await this.#contract.read.redundancyCount([hash], {
-        ...(block_number ? { blockNumber: block_number } : {}),
-      })
+        return this.#contract.read.redundancyCount([hash], {
+          ...(block_number !== 0n ? { blockNumber: block_number } : {}),
+        }) as Promise<number>;
+      }
     );
-  }
 }

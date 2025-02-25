@@ -78,55 +78,31 @@ export class Subscription {
     completed: {
       returns: z.boolean(),
     },
-    get_response_count: {
-      args: {
-        interval: z.number(),
-      },
-      returns: z.number(),
-    },
-    set_response_count: {
-      args: {
-        interval: z.number(),
-        count: z.number(),
-      },
-      returns: z.void(),
-    },
-    get_node_replied: {
-      args: {
-        interval: z.number(),
-      },
-      returns: z.boolean(),
-    },
-    set_node_replied: {
-      args: {
-        interval: z.number(),
-      },
-      returns: z.void(),
-    },
-    get_delegate_subscription_typed_data: {
-      args: {
-        nonce: z.number(),
-        expiry: z.number(),
-        chain_id: z.number(),
-        verifying_contract: ChecksumAddressSchema,
-      },
-      returns: HexSchema,
-    },
-    get_tx_inputs: {
-      returns: z.tuple([
-        z.string(),
-        z.number(),
-        z.number(),
-        z.number(),
-        z.number(),
-        HexSchema,
-        z.boolean(),
-        z.string(),
-        z.number(),
-        z.string(),
-        z.string(),
-      ]),
-    },
+    get_response_count: z.function().args(z.number()).returns(z.number()),
+    set_response_count: z.function().args(z.number(), z.number()),
+    get_node_replied: z.function().args(z.number()).returns(z.boolean()),
+    set_node_replied: z.function().args(z.number()),
+    get_delegate_subscription_typed_data: z
+      .function()
+      .args(z.number(), z.number(), z.number(), ChecksumAddressSchema)
+      .returns(HexSchema),
+    get_tx_inputs: z
+      .function()
+      .returns(
+        z.tuple([
+          z.string(),
+          z.number(),
+          z.number(),
+          z.number(),
+          z.number(),
+          HexSchema,
+          z.boolean(),
+          z.string(),
+          z.number(),
+          z.string(),
+          z.string(),
+        ])
+      ),
   };
 
   id: z.infer<typeof Subscription.fieldSchemas.id>;
@@ -338,168 +314,131 @@ export class Subscription {
   }
 
   // Returns response count by subscription interval.
-  get_response_count(
-    interval: z.infer<
-      typeof Subscription.methodSchemas.get_response_count.args.interval
-    >
-  ): z.infer<typeof Subscription.methodSchemas.get_response_count.returns> {
-    return Subscription.methodSchemas.get_response_count.returns.parse(
-      this.#responses[interval] ?? 0
-    );
-  }
+  get_response_count = Subscription.methodSchemas.get_response_count.implement(
+    (interval) => this.#responses[interval] ?? 0
+  );
 
   // Sets response count for a subscription interval.
-  set_response_count(
-    interval: z.infer<
-      typeof Subscription.methodSchemas.set_response_count.args.interval
-    >,
-    count: z.infer<
-      typeof Subscription.methodSchemas.set_response_count.args.count
-    >
-  ): z.infer<typeof Subscription.methodSchemas.set_response_count.returns> {
-    // Throw if updating response count for inactive subscription.
-    if (!this.active)
-      throw new Error('Cannot update response count for inactive subscription');
-
-    // Throw if updating response count for a future interval.
-    if (interval > this.interval)
-      throw new Error('Cannot update response count for future interval');
-
-    this.#responses[interval] = count;
-  }
-
-  // Returns whether local node has responded within the interval.
-  get_node_replied(
-    interval: z.infer<
-      typeof Subscription.methodSchemas.get_node_replied.args.interval
-    >
-  ): z.infer<typeof Subscription.methodSchemas.get_node_replied.returns> {
-    return Subscription.methodSchemas.get_node_replied.returns.parse(
-      !!this.#node_replied[interval]
-    );
-  }
-
-  // Sets a local node as having responded within the interval.
-  set_node_replied(
-    interval: z.infer<
-      typeof Subscription.methodSchemas.set_node_replied.args.interval
-    >
-  ): z.infer<typeof Subscription.methodSchemas.set_node_replied.returns> {
-    this.#node_replied[interval] = true;
-  }
-
-  // Generates EIP-712 typed data to sign for `DelegateeSubscription`.
-  get_delegate_subscription_typed_data(
-    nonce: z.infer<
-      typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.args.nonce
-    >,
-    expiry: z.infer<
-      typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.args.expiry
-    >,
-    chain_id: z.infer<
-      typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.args.chain_id
-    >,
-    verifying_contract: z.infer<
-      typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.args.verifying_contract
-    >
-  ): z.infer<
-    typeof Subscription.methodSchemas.get_delegate_subscription_typed_data.returns
-  > {
-    const cacheKey = JSON.stringify([
-      nonce,
-      expiry,
-      chain_id,
-      verifying_contract,
-    ]);
-
-    if (!this.#cached_delegate_subscription_typed_data[cacheKey])
-      this.#cached_delegate_subscription_typed_data[cacheKey] =
-        Subscription.methodSchemas.get_delegate_subscription_typed_data.returns.parse(
-          hashTypedData({
-            domain: {
-              name: 'InfernetCoordinator',
-              version: '1',
-              chainId: BigInt(chain_id),
-              verifyingContract: verifying_contract,
-            },
-            types: {
-              EIP712Domain: [
-                { name: 'name', type: 'string' },
-                { name: 'version', type: 'string' },
-                { name: 'chainId', type: 'uint256' },
-                { name: 'verifyingContract', type: 'address' },
-              ],
-              DelegateSubscription: [
-                { name: 'nonce', type: 'uint32' },
-                { name: 'expiry', type: 'uint32' },
-                { name: 'sub', type: 'Subscription' },
-              ],
-              Subscription: [
-                { name: 'owner', type: 'address' },
-                { name: 'activeAt', type: 'uint32' },
-                { name: 'period', type: 'uint32' },
-                { name: 'frequency', type: 'uint32' },
-                { name: 'redundancy', type: 'uint16' },
-                { name: 'containerId', type: 'bytes32' },
-                { name: 'lazy', type: 'bool' },
-                { name: 'verifier', type: 'address' },
-                { name: 'paymentAmount', type: 'uint256' },
-                { name: 'paymentToken', type: 'address' },
-                { name: 'wallet', type: 'address' },
-              ],
-            },
-            primaryType: 'DelegateSubscription',
-            message: {
-              nonce,
-              expiry,
-              sub: {
-                owner: this.owner,
-                activeAt: this.#active_at,
-                period: this.#period,
-                frequency: this.#frequency,
-                redundancy: this.#redundancy,
-                containerId: this.containers_hash,
-                lazy: this.#lazy,
-                verifier: this.verifier,
-                paymentAmount: BigInt(this.payment_amount),
-                paymentToken: this.payment_token,
-                wallet: this.wallet,
-              },
-            },
-          })
+  set_response_count = Subscription.methodSchemas.set_response_count.implement(
+    (interval, count) => {
+      // Throw if updating response count for inactive subscription.
+      if (!this.active)
+        throw new Error(
+          'Cannot update response count for inactive subscription'
         );
 
-    return this.#cached_delegate_subscription_typed_data[cacheKey];
-  }
+      // Throw if updating response count for a future interval.
+      if (interval > this.interval)
+        throw new Error('Cannot update response count for future interval');
+
+      this.#responses[interval] = count;
+    }
+  );
+
+  // Returns whether local node has responded within the interval.
+  get_node_replied = Subscription.methodSchemas.get_node_replied.implement(
+    (interval) => !!this.#node_replied[interval]
+  );
+
+  // Sets a local node as having responded within the interval.
+  set_node_replied = Subscription.methodSchemas.set_node_replied.implement(
+    (interval) => {
+      this.#node_replied[interval] = true;
+    }
+  );
+
+  // Generates EIP-712 typed data to sign for `DelegateeSubscription`.
+  get_delegate_subscription_typed_data =
+    Subscription.methodSchemas.get_delegate_subscription_typed_data.implement(
+      (nonce, expiry, chain_id, verifying_contract) => {
+        const cacheKey = JSON.stringify([
+          nonce,
+          expiry,
+          chain_id,
+          verifying_contract,
+        ]);
+
+        if (!this.#cached_delegate_subscription_typed_data[cacheKey])
+          this.#cached_delegate_subscription_typed_data[cacheKey] =
+            hashTypedData({
+              domain: {
+                name: 'InfernetCoordinator',
+                version: '1',
+                chainId: BigInt(chain_id),
+                verifyingContract: verifying_contract,
+              },
+              types: {
+                EIP712Domain: [
+                  { name: 'name', type: 'string' },
+                  { name: 'version', type: 'string' },
+                  { name: 'chainId', type: 'uint256' },
+                  { name: 'verifyingContract', type: 'address' },
+                ],
+                DelegateSubscription: [
+                  { name: 'nonce', type: 'uint32' },
+                  { name: 'expiry', type: 'uint32' },
+                  { name: 'sub', type: 'Subscription' },
+                ],
+                Subscription: [
+                  { name: 'owner', type: 'address' },
+                  { name: 'activeAt', type: 'uint32' },
+                  { name: 'period', type: 'uint32' },
+                  { name: 'frequency', type: 'uint32' },
+                  { name: 'redundancy', type: 'uint16' },
+                  { name: 'containerId', type: 'bytes32' },
+                  { name: 'lazy', type: 'bool' },
+                  { name: 'verifier', type: 'address' },
+                  { name: 'paymentAmount', type: 'uint256' },
+                  { name: 'paymentToken', type: 'address' },
+                  { name: 'wallet', type: 'address' },
+                ],
+              },
+              primaryType: 'DelegateSubscription',
+              message: {
+                nonce,
+                expiry,
+                sub: {
+                  owner: this.owner,
+                  activeAt: this.#active_at,
+                  period: this.#period,
+                  frequency: this.#frequency,
+                  redundancy: this.#redundancy,
+                  containerId: this.containers_hash,
+                  lazy: this.#lazy,
+                  verifier: this.verifier,
+                  paymentAmount: BigInt(this.payment_amount),
+                  paymentToken: this.payment_token,
+                  wallet: this.wallet,
+                },
+              },
+            });
+
+        return this.#cached_delegate_subscription_typed_data[cacheKey];
+      }
+    );
 
   // Returns subscription parameters as raw array input for generated txs.
-  get_tx_inputs(): z.infer<
-    typeof Subscription.methodSchemas.get_tx_inputs.returns
-  > {
-    return Subscription.methodSchemas.get_tx_inputs.returns.parse([
-      this.owner,
-      this.#active_at,
-      this.#period,
-      this.#frequency,
-      this.#redundancy,
-      this.containers_hash,
-      this.#lazy,
-      this.verifier,
-      this.payment_amount,
-      this.payment_token,
-      this.wallet,
-    ]);
-  }
+  get_tx_inputs = Subscription.methodSchemas.get_tx_inputs.implement(() => [
+    this.owner,
+    this.#active_at,
+    this.#period,
+    this.#frequency,
+    this.#redundancy,
+    this.containers_hash,
+    this.#lazy,
+    this.verifier,
+    this.payment_amount,
+    this.payment_token,
+    this.wallet,
+  ]);
 }
 
 export class SerializedSubscription {
   static methodSchemas = {
-    deserialize: {
-      args: {
-        container_lookup: Subscription.fieldSchemas._container_lookup,
-      },
-      returns: z.instanceof(Subscription),
-    },
+    deserialize: z
+      .function()
+      .args(Subscription.fieldSchemas._container_lookup)
+      .returns(z.instanceof(Subscription)),
   };
 
   owner: z.infer<typeof Subscription.fieldSchemas._owner>;
@@ -543,12 +482,8 @@ export class SerializedSubscription {
     this.wallet = Subscription.fieldSchemas._wallet.parse(wallet);
   }
 
-  deserialize(
-    container_lookup: z.infer<
-      typeof SerializedSubscription.methodSchemas.deserialize.args.container_lookup
-    >
-  ): z.infer<typeof SerializedSubscription.methodSchemas.deserialize.returns> {
-    return SerializedSubscription.methodSchemas.deserialize.returns.parse(
+  deserialize = SerializedSubscription.methodSchemas.deserialize.implement(
+    (container_lookup) =>
       new Subscription(
         -1,
         container_lookup,
@@ -564,6 +499,5 @@ export class SerializedSubscription {
         this.payment_token,
         this.wallet
       )
-    );
-  }
+  );
 }

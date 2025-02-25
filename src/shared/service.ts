@@ -7,30 +7,19 @@ const FieldSchemas = {
 };
 
 const MethodSchemas = {
-  setup: {
-    returns: z.void(),
-  },
-  run_forever: {
-    returns: z.void(),
-  },
-  cleanup: {
-    returns: z.void(),
-  },
-  stop: {
-    returns: z.void(),
-  },
+  stop: z.function(),
 };
 
 export abstract class AsyncTask {
   shutdown: z.infer<typeof FieldSchemas.shutdown> = false;
 
-  abstract setup(): z.infer<typeof MethodSchemas.setup.returns>;
+  abstract setup(...args: any);
 
-  abstract run_forever(): z.infer<typeof MethodSchemas.run_forever.returns>;
+  abstract run_forever(...args: any);
 
-  abstract cleanup(): z.infer<typeof MethodSchemas.cleanup.returns>;
+  abstract cleanup(...args: any);
 
-  stop(): z.infer<typeof MethodSchemas.stop.returns> {
+  stop = MethodSchemas.stop.implement(() => {
     this.shutdown = true;
-  }
+  });
 }
