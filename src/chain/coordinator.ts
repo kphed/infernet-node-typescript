@@ -3,7 +3,6 @@ import { z } from 'zod';
 import {
   Hex,
   Address,
-  BlockNumber,
   encodeAbiParameters,
   GetContractReturnType,
   Abi,
@@ -578,10 +577,6 @@ export class Coordinator {
       typeof Coordinator.methodSchemas.get_subscription_response_count.returns
     >
   > {
-    let blockNumber = block_number;
-
-    if (!blockNumber) blockNumber = await this.#rpc.get_head_block_number();
-
     const redundancyCountKey = encodeAbiParameters(
       [{ type: 'uint32' }, { type: 'uint32' }],
       [subscription_id, interval]
@@ -590,7 +585,7 @@ export class Coordinator {
 
     return Coordinator.methodSchemas.get_subscription_response_count.returns.parse(
       await this.#contract.read.redundancyCount([hash], {
-        blockNumber: block_number,
+        ...(block_number ? { blockNumber: block_number } : {}),
       })
     );
   }
