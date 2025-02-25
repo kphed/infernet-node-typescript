@@ -11,6 +11,7 @@ import {
   recoverAddress,
   SimulateContractReturnType,
   WriteContractReturnType,
+  toHex,
 } from 'viem';
 import { RPC } from './rpc';
 import {
@@ -28,7 +29,7 @@ import {
   BlockNumberSchema,
 } from '../shared/schemas';
 
-enum CoordinatorEvent {
+export enum CoordinatorEvent {
   SubscriptionCreated = 'SubscriptionCreated(uint32)',
   SubscriptionCancelled = 'SubscriptionCancelled(uint32)',
   SubscriptionFulfilled = 'SubscriptionFulfilled(uint32,address)',
@@ -39,9 +40,9 @@ export const CoordinatorEventSchema = z.nativeEnum(CoordinatorEvent);
 export const CoordinatorSignatureParamsSchema = z.object({
   nonce: z.number(),
   expiry: z.number(),
-  v: z.number(),
-  r: z.union([z.number(), HexSchema]),
-  s: z.union([z.number(), HexSchema]),
+  v: z.bigint(),
+  r: z.bigint(),
+  s: z.bigint(),
 });
 
 export const CoordinatorDeliveryParamsSchema = z
@@ -63,6 +64,11 @@ export const CoordinatorTxParamsSchema = z
   })
   .strict();
 
+export const BigIntToBytes32Schema = z
+  .function()
+  .args(z.bigint())
+  .returns(HexSchema);
+
 export type CoordinatorDeliveryParams = z.infer<
   typeof CoordinatorDeliveryParamsSchema
 >;
@@ -73,6 +79,8 @@ export type CoordinatorSignatureParams = z.infer<
 
 export type CoordinatorTxParams = z.infer<typeof CoordinatorTxParamsSchema>;
 
+export type BigIntToBytes32 = z.infer<typeof BigIntToBytes32Schema>;
+
 const coordinatorEventHashes = Object.keys(CoordinatorEvent).reduce(
   (acc, event) => ({
     ...acc,
@@ -81,6 +89,8 @@ const coordinatorEventHashes = Object.keys(CoordinatorEvent).reduce(
   }),
   {}
 );
+
+const bigIntToBytes32: BigIntToBytes32 = (val) => toHex(val, { size: 32 });
 
 export class Coordinator {
   static fieldSchemas = {
@@ -299,9 +309,9 @@ export class Coordinator {
       await recoverAddress({
         // Consider using `yParity` in the future since `v` is deprecated: https://github.com/wevm/viem/blob/main/src/types/misc.ts#L23.
         signature: serializeSignature({
-          r: signature.r as Hex,
-          s: signature.s as Hex,
-          v: BigInt(signature.v),
+          r: bigIntToBytes32(signature.r),
+          s: bigIntToBytes32(signature.s),
+          v: signature.v,
         }),
         hash: subscription.get_delegate_subscription_typed_data(
           signature.nonce,
@@ -356,8 +366,8 @@ export class Coordinator {
             signature.expiry,
             data.subscription.get_tx_inputs(),
             signature.v,
-            signature.r,
-            signature.s,
+            bigIntToBytes32(signature.r),
+            bigIntToBytes32(signature.s),
             data.interval,
             data.input,
             data.output,
