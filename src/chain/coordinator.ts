@@ -1,4 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/9e67ac3af88092a8ac181829da33d863fd8ea990/src/chain/coordinator.py.
+import { z } from 'zod';
 import {
   Hex,
   Address,
@@ -11,7 +12,6 @@ import {
   recoverAddress,
   SimulateContractReturnType,
 } from 'viem';
-import { z } from 'zod';
 import { RPC } from './rpc';
 import {
   COORDINATOR_ABI,
@@ -21,6 +21,11 @@ import {
 } from '../utils/constants';
 import { Subscription } from '../shared/subscription';
 import { ContainerLookup } from './containerLookup';
+import {
+  HexSchema,
+  AddressSchema,
+  ChecksumAddressSchema,
+} from '../shared/schemas';
 
 enum CoordinatorEvent {
   SubscriptionCreated = 'SubscriptionCreated(uint32)',
@@ -28,64 +33,75 @@ enum CoordinatorEvent {
   SubscriptionFulfilled = 'SubscriptionFulfilled(uint32,address)',
 }
 
+export const CoordinatorEventSchema = z.nativeEnum(CoordinatorEvent);
+
 export const CoordinatorSignatureParamsSchema = z.object({
   nonce: z.number(),
   expiry: z.number(),
   v: z.number(),
-  r: z.union([
-    z.number(),
-    z.string().refine((str) => str.substring(0, 2) === '0x'),
-  ]),
-  s: z.union([
-    z.number(),
-    z.string().refine((str) => str.substring(0, 2) === '0x'),
-  ]),
+  r: z.union([z.number(), HexSchema]),
+  s: z.union([z.number(), HexSchema]),
 });
 
-export interface CoordinatorDeliveryParams {
-  subscription: Subscription;
-  interval: number;
-  input: Hex;
-  output: Hex;
-  proof: Hex;
-  node_wallet: Address;
-}
+export const CoordinatorDeliveryParamsSchema = z
+  .object({
+    subscription: z.instanceof(Subscription),
+    interval: z.number(),
+    input: HexSchema,
+    output: HexSchema,
+    proof: HexSchema,
+    node_wallet: AddressSchema,
+  })
+  .strict();
+
+export const CoordinatorTxParamsSchema = z
+  .object({
+    nonce: z.number(),
+    sender: AddressSchema,
+    gas_limit: z.number(),
+  })
+  .strict();
+
+export type CoordinatorDeliveryParams = z.infer<
+  typeof CoordinatorDeliveryParamsSchema
+>;
 
 export type CoordinatorSignatureParams = z.infer<
   typeof CoordinatorSignatureParamsSchema
 >;
 
-interface CoordinatorTxParams {
-  nonce: number;
-  sender: Address;
-  gas_limit: number;
-}
+export type CoordinatorTxParams = z.infer<typeof CoordinatorTxParamsSchema>;
 
 export class Coordinator {
-  #rpc: RPC;
-  #lookup: ContainerLookup;
-  #checksum_address: Address;
-  #contract: GetContractReturnType<Abi, Client, Address>;
+  static fieldSchemas = {
+    _rpc: z.instanceof(RPC),
+    _lookup: z.instanceof(ContainerLookup),
+    _checksum_address: ChecksumAddressSchema,
+    _contract: z.custom<GetContractReturnType<Abi, Client, Address>>(),
+  };
 
-  constructor(
-    rpc: RPC,
-    coordinator_address: Address,
-    container_lookup: ContainerLookup
-  ) {
+  #rpc: z.infer<typeof Coordinator.fieldSchemas._rpc>;
+  #lookup: z.infer<typeof Coordinator.fieldSchemas._lookup>;
+  #checksum_address: z.infer<typeof Coordinator.fieldSchemas._checksum_address>;
+  #contract: z.infer<typeof Coordinator.fieldSchemas._contract>;
+
+  constructor(rpc, coordinator_address, container_lookup) {
     if (!RPC.is_valid_address(coordinator_address))
       throw new Error('Coordinator address is incorrectly formatted');
 
-    this.#rpc = rpc;
-    this.#lookup = container_lookup;
-    this.#checksum_address = RPC.get_checksum_address(coordinator_address);
-    this.#contract = rpc.get_contract(this.#checksum_address, COORDINATOR_ABI);
+    this.#rpc = Coordinator.fieldSchemas._rpc.parse(rpc);
+    this.#lookup = Coordinator.fieldSchemas._lookup.parse(container_lookup);
+    this.#checksum_address = Coordinator.fieldSchemas._checksum_address.parse(
+      RPC.get_checksum_address(coordinator_address)
+    );
+    this.#contract = Coordinator.fieldSchemas._contract.parse(
+      rpc.get_contract(this.#checksum_address, COORDINATOR_ABI)
+    );
 
     console.log('Initialized Coordinator', { address: this.#checksum_address });
   }
 
-  /**
-   * Gets event => event hash dictionary.
-   */
+  // Returns an object with "event name" keys with corresponding hash values.
   get_event_hashes(): {
     [key: string]: Hex;
   } {
