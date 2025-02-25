@@ -74,6 +74,15 @@ export type CoordinatorSignatureParams = z.infer<
 
 export type CoordinatorTxParams = z.infer<typeof CoordinatorTxParamsSchema>;
 
+const coordinatorEventHashes = Object.keys(CoordinatorEvent).reduce(
+  (acc, event) => ({
+    ...acc,
+    // `get_event_hash` is a static field, and can be called without instantiating the class.
+    [event]: RPC.get_event_hash(CoordinatorEvent[event]),
+  }),
+  {}
+);
+
 export class Coordinator {
   static fieldSchemas = {
     _rpc: z.instanceof(RPC),
@@ -194,7 +203,9 @@ export class Coordinator {
       rpc.get_contract(this.#checksum_address, COORDINATOR_ABI)
     );
 
-    console.log('Initialized Coordinator', { address: this.#checksum_address });
+    console.debug('Initialized Coordinator', {
+      address: this.#checksum_address,
+    });
   }
 
   // Returns an object with "event name" keys with corresponding hash values.
@@ -202,13 +213,7 @@ export class Coordinator {
     typeof Coordinator.methodSchemas.get_event_hashes.returns
   > {
     return Coordinator.methodSchemas.get_event_hashes.returns.parse(
-      Object.keys(CoordinatorEvent).reduce(
-        (acc, event) => ({
-          ...acc,
-          [event]: RPC.get_event_hash(CoordinatorEvent[event]),
-        }),
-        {}
-      )
+      coordinatorEventHashes
     );
   }
 
