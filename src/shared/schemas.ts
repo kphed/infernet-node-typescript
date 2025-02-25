@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isAddress, Hex } from 'viem';
+import { isAddress, Hex, BlockNumber } from 'viem';
 
 export const AddressSchema = z
   .string()
@@ -18,3 +18,5 @@ export const ChecksumAddressSchema = z
 export const HexSchema = z.custom<Hex>((val) => {
   return typeof val === 'string' ? val.substring(0, 2) === '0x' : false;
 });
+
+export const BlockNumberSchema = z.custom<BlockNumber>();
