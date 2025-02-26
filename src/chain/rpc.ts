@@ -21,6 +21,7 @@ import {
   CreateEventFilterParameters,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { LRUCache } from 'lru-cache';
 import { delay } from '../utils/helpers';
 import {
   AddressSchema,
@@ -43,6 +44,7 @@ export class RPC {
   static fieldSchemas = {
     _private_key: HexSchema,
     _wallet: z.custom<WalletClient>(),
+    _block_cache: z.custom<LRUCache<bigint, Block>>(),
     client: z.custom<PublicClient>(),
   };
 
@@ -74,7 +76,7 @@ export class RPC {
       .returns(z.promise(z.custom<GetTransactionCountReturnType>())),
     get_block_by_number: z
       .function()
-      .args(z.number())
+      .args(z.bigint())
       .returns(z.promise(z.custom<Block>())),
     get_head_block_number: z
       .function()
@@ -107,6 +109,7 @@ export class RPC {
 
   #private_key: z.infer<typeof RPC.fieldSchemas._private_key>;
   #wallet: z.infer<typeof RPC.fieldSchemas._wallet>;
+  #block_cache: z.infer<typeof RPC.fieldSchemas._block_cache>;
   client: z.infer<typeof RPC.fieldSchemas.client>;
 
   constructor(rpc_url, private_key) {
@@ -117,6 +120,7 @@ export class RPC {
         transport: http(rpc_url),
       })
     );
+    this.#block_cache = new LRUCache({ max: 100 });
     this.client = RPC.fieldSchemas.client.parse(
       createPublicClient({
         transport: http(rpc_url),
@@ -183,10 +187,19 @@ export class RPC {
 
   // Gets block data for a block specified by number.
   get_block_by_number = RPC.methodSchemas.get_block_by_number.implement(
-    (block_number) =>
-      this.client.getBlock({
+    async (block_number) => {
+      let block = this.#block_cache.get(block_number);
+
+      if (block) return block;
+
+      block = await this.client.getBlock({
         blockNumber: BigInt(block_number),
-      })
+      });
+
+      this.#block_cache.set(block_number, block);
+
+      return block;
+    }
   );
 
   // Gets the latest confirmed block number.
