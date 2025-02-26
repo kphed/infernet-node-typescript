@@ -46,7 +46,7 @@ export class WalletChecker {
    */
   is_valid_wallet(address: Address): Promise<boolean> {
     const walletFactoryContract = this.#rpc.get_contract(
-      this.#registry.wallet_factory(),
+      this.#registry.wallet_factory,
       WALLET_FACTORY_ABI
     );
 

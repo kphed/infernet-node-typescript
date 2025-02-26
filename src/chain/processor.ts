@@ -958,7 +958,7 @@ export class ChainProcessor extends AsyncTask {
           id: subscription.id,
           token: subscription.payment_token,
           amount: subscription.payment_amount,
-          spender: this.#registry.coordinator(),
+          spender: this.#registry.coordinator,
         });
 
         await this.#payment_wallet.approve(

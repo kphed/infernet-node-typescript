@@ -94,10 +94,10 @@ class NodeLifecycle {
 
         const coordinator = new Coordinator(
           rpc,
-          registry.coordinator(),
+          registry.coordinator,
           containerLookup
         );
-        const reader = new Reader(rpc, registry.reader(), containerLookup);
+        const reader = new Reader(rpc, registry.reader, containerLookup);
         wallet = new Wallet(
           rpc,
           coordinator,
