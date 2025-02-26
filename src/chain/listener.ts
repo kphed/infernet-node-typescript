@@ -1,4 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/7753fef9ca3e1383843919bfbb2cc175f8dcd3b7/src/chain/listener.py.
+import { z } from 'zod';
 import { BlockNumber } from 'viem';
 import { Coordinator } from './coordinator';
 import { ChainProcessor } from './processor';
@@ -6,180 +7,217 @@ import { Reader } from './reader';
 import { Registry } from './registry';
 import { RPC } from './rpc';
 import { Guardian } from '../orchestration/guardian';
-import { ConfigSnapshotSync } from '../shared/config';
 import {
   GuardianError,
   SubscriptionCreatedMessageSchema,
+  MessageType,
 } from '../shared/message';
 import { AsyncTask } from '../shared/service';
 import { Subscription } from '../shared/subscription';
 import { delay } from '../utils/helpers';
+import { BlockNumberSchema } from '../shared/schemas';
 
-/**
- * Get batches of size batch_size from start to end (inclusive), used for snapshot sync.
- */
-const getBatches = (
-  start: number,
-  end: number,
-  batchSize: number
-): [number, number][] => {
+const GetBatchesSchema = z
+  .function()
+  .args(z.number(), z.number(), z.number())
+  .returns(z.tuple([z.number(), z.number()]).array());
+
+// Get batches of size `batchSize` from start to end (inclusive), used for snapshot sync.
+const getBatches = GetBatchesSchema.implement((start, end, batchSize) => {
   if (start === end) {
     return [[start, start + 1]];
   } else if (end - start + 1 <= batchSize) {
     return [[start, end + 1]];
   }
 
-  const batches: [number, number][] = [];
+  const batches: any = [];
 
   for (let i = start; i < end + 1; i += batchSize) {
     batches.push([i, Math.min(i + batchSize - 1, end) + 1]);
   }
 
   return batches;
-};
+});
 
 export class ChainListener extends AsyncTask {
-  #rpc: RPC;
-  #coordinator: Coordinator;
-  #registry: Registry;
-  #reader: Reader;
-  #guardian: Guardian;
-  #processor: ChainProcessor;
-  #trail_head_blocks: bigint;
-  #snapshot_sync_sleep: number;
-  #snapshot_sync_batch_size: number;
-  #snapshot_sync_starting_sub_id: number;
-  #syncing_period: number;
-  #last_block: bigint = 0n;
-  #last_subscription_id: number = 0;
+  static fieldSchemas = {
+    _rpc: z.instanceof(RPC),
+    _coordinator: z.instanceof(Coordinator),
+    _registry: z.instanceof(Registry),
+    _reader: z.instanceof(Reader),
+    _guardian: z.instanceof(Guardian),
+    _processor: z.instanceof(ChainProcessor),
+    _trail_head_blocks: z.bigint(),
+    _snapshot_sync_sleep: z.number(),
+    _snapshot_sync_batch_size: z.number(),
+    _snapshot_sync_starting_sub_id: z.number(),
+    _syncing_period: z.number(),
+    _last_block: z.bigint(),
+    _last_subscription_id: z.number(),
+  };
+
+  static methodSchemas = {
+    _sync_batch_subscriptions_creation: z
+      .function()
+      .args(z.number(), z.number(), BlockNumberSchema)
+      .returns(z.promise(z.void())),
+  };
+
+  #rpc: z.infer<typeof ChainListener.fieldSchemas._rpc>;
+  #coordinator: z.infer<typeof ChainListener.fieldSchemas._coordinator>;
+  #registry: z.infer<typeof ChainListener.fieldSchemas._registry>;
+  #reader: z.infer<typeof ChainListener.fieldSchemas._reader>;
+  #guardian: z.infer<typeof ChainListener.fieldSchemas._guardian>;
+  #processor: z.infer<typeof ChainListener.fieldSchemas._processor>;
+  #trail_head_blocks: z.infer<
+    typeof ChainListener.fieldSchemas._trail_head_blocks
+  >;
+  #snapshot_sync_sleep: z.infer<
+    typeof ChainListener.fieldSchemas._snapshot_sync_sleep
+  >;
+  #snapshot_sync_batch_size: z.infer<
+    typeof ChainListener.fieldSchemas._snapshot_sync_batch_size
+  >;
+  #snapshot_sync_starting_sub_id: z.infer<
+    typeof ChainListener.fieldSchemas._snapshot_sync_starting_sub_id
+  >;
+  #syncing_period: z.infer<typeof ChainListener.fieldSchemas._syncing_period>;
+  #last_block: z.infer<typeof ChainListener.fieldSchemas._last_block> = 0n;
+  #last_subscription_id: z.infer<
+    typeof ChainListener.fieldSchemas._last_subscription_id
+  > = 0;
 
   constructor(
-    rpc: RPC,
-    coordinator: Coordinator,
-    registry: Registry,
-    reader: Reader,
-    guardian: Guardian,
-    processor: ChainProcessor,
-    trail_head_blocks: number,
-    snapshot_sync: ConfigSnapshotSync
+    rpc,
+    coordinator,
+    registry,
+    reader,
+    guardian,
+    processor,
+    trail_head_blocks,
+    snapshot_sync
   ) {
     super();
 
-    this.#rpc = rpc;
-    this.#coordinator = coordinator;
-    this.#registry = registry;
-    this.#reader = reader;
-    this.#guardian = guardian;
-    this.#processor = processor;
-    this.#trail_head_blocks = BigInt(trail_head_blocks);
-    this.#snapshot_sync_sleep = snapshot_sync.sleep;
-    this.#snapshot_sync_batch_size = snapshot_sync.batch_size;
-    this.#snapshot_sync_starting_sub_id = snapshot_sync.starting_sub_id;
-    this.#syncing_period = snapshot_sync.sync_period;
+    this.#rpc = ChainListener.fieldSchemas._rpc.parse(rpc);
+    this.#coordinator =
+      ChainListener.fieldSchemas._coordinator.parse(coordinator);
+    this.#registry = ChainListener.fieldSchemas._registry.parse(registry);
+    this.#reader = ChainListener.fieldSchemas._reader.parse(reader);
+    this.#guardian = ChainListener.fieldSchemas._guardian.parse(guardian);
+    this.#processor = ChainListener.fieldSchemas._processor.parse(processor);
+    this.#trail_head_blocks =
+      ChainListener.fieldSchemas._trail_head_blocks.parse(
+        BigInt(trail_head_blocks)
+      );
+    this.#snapshot_sync_sleep =
+      ChainListener.fieldSchemas._snapshot_sync_sleep.parse(
+        snapshot_sync.sleep
+      );
+    this.#snapshot_sync_batch_size =
+      ChainListener.fieldSchemas._snapshot_sync_batch_size.parse(
+        snapshot_sync.batch_size
+      );
+    this.#snapshot_sync_starting_sub_id =
+      ChainListener.fieldSchemas._snapshot_sync_starting_sub_id.parse(
+        snapshot_sync.starting_sub_id
+      );
+    this.#syncing_period = ChainListener.fieldSchemas._syncing_period.parse(
+      snapshot_sync.sync_period
+    );
 
     console.info('Initialized ChainListener');
   }
 
-  /**
-   * Syncs a batch of subscriptions from start_id to end_id (inclusive).
-   *
-   * Consumed by:
-   * 1. Snapshot sync when initially syncing subscriptions.
-   * 2. Parsing subscription creation logs when event replaying creation.
-   *
-   * Process:
-   * 1. Collect subscriptions at specified block number through Reader SC.
-   * 2. Collect batch response count at specified block number through Reader SC.
-   * 3. For subscriptions that are on last interval, collect and set response count
-   * (useful to filter out completed subscriptions).
-   * 4. Validate subscriptions against guardian rules.
-   * 5. If validated, forward subscriptions to ChainProcessor.
-   */
-  async #sync_batch_subscriptions_creation(
-    start_id: number,
-    end_id: number,
-    block_number: BlockNumber
-  ): Promise<void> {
-    if (this.shutdown) return;
+  // Syncs a batch of subscriptions from `start_id` to `end_id` (does not include subscription with `end_id` in batch).
+  #sync_batch_subscriptions_creation =
+    ChainListener.methodSchemas._sync_batch_subscriptions_creation.implement(
+      async (start_id, end_id, block_number) => {
+        if (this.shutdown) return;
 
-    const subscriptions = await this.#reader.read_subscription_batch(
-      start_id,
-      end_id,
-      block_number
-    );
+        const subscriptions = await this.#reader.read_subscription_batch(
+          start_id,
+          end_id,
+          block_number
+        );
 
-    // Get IDs, intervals and response count data for subscriptions that are on last interval.
-    const { filteredIds, filteredIntervals } = subscriptions.reduce(
-      (
-        acc: { filteredIds: number[]; filteredIntervals: number[] },
-        subscription: Subscription
-      ) => {
-        if (subscription.last_interval) {
-          return {
-            filteredIds: [...acc.filteredIds, subscription.id],
-            filteredIntervals: [
-              ...acc.filteredIntervals,
-              subscription.interval,
-            ],
-          };
+        // Get IDs, intervals and response count data for subscriptions that are on last interval.
+        const { filteredIds, filteredIntervals } = subscriptions.reduce(
+          (
+            acc: { filteredIds: number[]; filteredIntervals: number[] },
+            subscription: Subscription
+          ) => {
+            if (subscription.last_interval) {
+              return {
+                filteredIds: [...acc.filteredIds, subscription.id],
+                filteredIntervals: [
+                  ...acc.filteredIntervals,
+                  subscription.interval,
+                ],
+              };
+            }
+
+            return acc;
+          },
+          { filteredIds: [], filteredIntervals: [] }
+        );
+        const filteredResponseCount =
+          await this.#reader.read_redundancy_count_batch(
+            filteredIds,
+            filteredIntervals,
+            block_number
+          );
+
+        if (
+          filteredIds.length !== filteredIntervals.length ||
+          filteredIds.length !== filteredResponseCount.length
+        )
+          throw new Error('Arrays must have the same length');
+
+        // For faster subscription ID lookups.
+        const subscriptionsById = subscriptions.reduce(
+          (acc, subscription: Subscription) => ({
+            ...acc,
+            [subscription.id]: subscription,
+          }),
+          {}
+        );
+
+        for (let i = 0; i < filteredIds.length; i++) {
+          const subscription: Subscription = subscriptionsById[filteredIds[i]];
+
+          if (subscription)
+            subscription.set_response_count(
+              filteredIntervals[i],
+              filteredResponseCount[i]
+            );
         }
 
-        return acc;
-      },
-      { filteredIds: [], filteredIntervals: [] }
-    );
-    const filteredResponseCount =
-      await this.#reader.read_redundancy_count_batch(
-        filteredIds,
-        filteredIntervals,
-        block_number
-      );
+        for (let i = 0; i < subscriptions.length; i++) {
+          const subscription = subscriptions[i];
+          const msg = SubscriptionCreatedMessageSchema.parse({
+            subscription,
+            type: MessageType.SubscriptionCreated,
+          });
 
-    if (
-      filteredIds.length !== filteredIntervals.length ||
-      filteredIds.length !== filteredResponseCount.length
-    )
-      throw new Error('Arrays must have the same length');
+          const filtered = this.#guardian.process_message(msg);
 
-    // For faster subscription ID lookups.
-    const subscriptionsById = subscriptions.reduce(
-      (acc, subscription: Subscription) => ({
-        ...acc,
-        [subscription.id]: subscription,
-      }),
-      {}
-    );
+          if (filtered instanceof GuardianError) {
+            // If filtered out by guardian, message is irrelevant.
+            console.info('Ignored subscription creation', {
+              id: subscription.id,
+              err: filtered.error,
+            });
+          } else {
+            this.#processor.track(msg);
 
-    for (let i = 0; i < filteredIds.length; i++) {
-      const subscription: Subscription = subscriptionsById[filteredIds[i]];
-
-      if (subscription)
-        subscription.set_response_count(
-          filteredIntervals[i],
-          filteredResponseCount[i]
-        );
-    }
-
-    for (let i = 0; i < subscriptions.length; i++) {
-      const subscription = subscriptions[i];
-      const msg = SubscriptionCreatedMessageSchema.parse(subscription);
-      const filtered = this.#guardian.process_message(msg);
-
-      if (filtered instanceof GuardianError) {
-        // If filtered out by guardian, message is irrelevant.
-        console.info('Ignored subscription creation', {
-          id: subscription.id,
-          err: filtered.error,
-        });
-      } else {
-        this.#processor.track(msg);
-
-        console.info('Relayed subscription creation', {
-          id: subscription.id,
-        });
+            console.info('Relayed subscription creation', {
+              id: subscription.id,
+            });
+          }
+        }
       }
-    }
-  }
+    );
 
   /**
    * Snapshot syncs subscriptions from Coordinator up to the latest subscription
