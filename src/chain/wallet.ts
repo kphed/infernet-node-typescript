@@ -1,4 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/d2c02520e29cffb976f45ae7e3f5701c4a99e333/src/chain/wallet.py.
+import { z } from 'zod';
 import {
   Hex,
   Address,
@@ -18,6 +19,10 @@ import { RPC } from './rpc';
 import { Subscription } from '../shared/subscription';
 import { ZERO_ADDRESS } from '../utils/constants';
 import { delay } from '../utils/helpers';
+
+const ContractCustomErrorSchema = z.custom<Hex>(
+  (val) => val.length === 10 && val.substring(0, 2) === '0x'
+);
 
 export class Wallet {
   #rpc: RPC;
@@ -91,26 +96,27 @@ export class Wallet {
           return true;
 
         if (err instanceof BaseError) {
-          const revertError = err.walk(
+          const revertError: any = err.walk(
             (err) =>
+              // Error types where the method was called, but reverted due to not meeting a condition.
               err instanceof ContractFunctionRevertedError ||
               err instanceof ContractFunctionExecutionError
           );
-          const functionReverted =
-            revertError instanceof ContractFunctionRevertedError;
-          const executionError =
-            revertError instanceof ContractFunctionExecutionError;
+          const { data: customError } = ContractCustomErrorSchema.safeParse(
+            revertError?.cause?.raw
+          );
 
-          if (functionReverted && revertError.raw) {
+          if (customError) {
             // For infernet-specific errors, more verbose logging is provided, and an `InfernetError` is thrown.
-            raise_if_infernet_error(revertError.raw, subscription);
+            raise_if_infernet_error(customError, subscription);
 
             // If the error is not infernet-specific, log it.
             console.error('Failed to simulate transaction', {
               error: revertError,
               subscription: subscription,
             });
-          } else if (executionError) {
+          } else if (revertError) {
+            // Handle non-custom error tx reversions (e.g. a `require` statement throwing).
             console.warn('Contract logic error while simulating', {
               error: revertError,
               subscription: subscription,
@@ -118,7 +124,7 @@ export class Wallet {
           }
 
           // Retry 3 times with a delay of 0.5 seconds if an error type matches and if there are retries remaining.
-          if ((functionReverted || executionError) && retries) {
+          if (revertError && retries) {
             await delay(500);
 
             return simulateWithRetries(retries - 1);
