@@ -10,11 +10,7 @@ import {
 } from 'viem';
 import { Mutex } from 'async-mutex';
 import { cloneDeep } from 'lodash';
-import {
-  Coordinator,
-  CoordinatorSignatureParams,
-  CoordinatorSignatureParamsSchema,
-} from './coordinator';
+import { Coordinator, CoordinatorSignatureParamsSchema } from './coordinator';
 import { InfernetError } from './errors';
 import { PaymentWallet } from './paymentWallet';
 import { Registry } from './registry';
@@ -24,15 +20,18 @@ import { WalletChecker } from './walletChecker';
 import { Orchestrator } from '../orchestration/orchestrator';
 import {
   ContainerError,
+  ContainerErrorSchema,
   ContainerOutput,
+  ContainerOutputSchema,
   JobInput,
   JobLocation,
 } from '../shared/job';
 import {
   DelegatedSubscriptionMessage,
+  DelegatedSubscriptionMessageSchema,
   MessageType,
-  OnchainMessage,
-  SubscriptionCreatedMessage,
+  OnchainMessageSchema,
+  SubscriptionCreatedMessageSchema,
 } from '../shared/message';
 import { AsyncTask } from '../shared/service';
 import { Subscription } from '../shared/subscription';
@@ -142,6 +141,111 @@ export class ChainProcessor extends AsyncTask {
     _attempts_lock: z.custom<Mutex>(),
   };
 
+  static methodSchemas = {
+    _track_created_message: z
+      .function()
+      .args(SubscriptionCreatedMessageSchema)
+      .returns(z.void()),
+    _track_delegated_message: z
+      .function()
+      .args(DelegatedSubscriptionMessageSchema)
+      .returns(z.promise(z.void())),
+    _has_responded_onchain_in_interval: z
+      .function()
+      .args(SubscriptionIDSchema)
+      .returns(z.promise(z.boolean())),
+    _prune_failed_txs: z.function().returns(z.promise(z.void())),
+    _stop_tracking: z
+      .function()
+      .args(UnionIDSchema, z.boolean())
+      .returns(z.void()),
+    _has_subscription_tx_pending_in_interval: z
+      .function()
+      .args(UnionIDSchema)
+      .returns(z.boolean()),
+    _serialize_param: z
+      .function()
+      .args(z.string().optional())
+      .returns(HexSchema),
+    _serialize_container_output: z
+      .function()
+      .args(ContainerOutputSchema)
+      .returns(z.tuple([HexSchema, HexSchema, HexSchema])),
+    _stop_tracking_if_sub_owner_cant_pay: z
+      .function()
+      .args(SubscriptionIDSchema)
+      .returns(z.promise(z.boolean())),
+    _stop_tracking_delegated_sub_if_completed: z
+      .function()
+      .args(DelegateSubscriptionIDSchema)
+      .returns(z.promise(z.boolean())),
+    _stop_tracking_sub_if_completed: z
+      .function()
+      .args(z.instanceof(Subscription))
+      .returns(z.promise(z.boolean())),
+    _stop_tracking_if_maximum_retries_reached: z
+      .function()
+      .args(z.tuple([UnionIDSchema, IntervalSchema]), z.boolean())
+      .returns(z.promise(z.boolean())),
+    _stop_tracking_sub_if_missed_deadline: z
+      .function()
+      .args(UnionIDSchema, z.boolean())
+      .returns(z.boolean()),
+    _stop_tracking_if_infernet_errors_caught_in_simulation: z
+      .function()
+      .args(
+        z.instanceof(Subscription),
+        z.boolean(),
+        CoordinatorSignatureParamsSchema.optional()
+      )
+      .returns(z.promise(z.boolean())),
+    _deliver: z
+      .function()
+      .args(
+        z.instanceof(Subscription),
+        z.boolean(),
+        CoordinatorSignatureParamsSchema.optional(),
+        z.boolean(),
+        HexSchema.default('0x'),
+        HexSchema.default('0x'),
+        HexSchema.default('0x')
+      )
+      .returns(z.promise(HexSchema)),
+    _execute_on_containers: z
+      .function()
+      .args(
+        z.instanceof(Subscription),
+        z.boolean(),
+        z
+          .tuple([CoordinatorSignatureParamsSchema, z.record(z.any())])
+          .optional()
+      )
+      .returns(
+        z.promise(
+          z.union([ContainerOutputSchema, ContainerErrorSchema]).array()
+        )
+      ),
+    _escrow_reward_in_wallet: z
+      .function()
+      .args(z.instanceof(Subscription))
+      .returns(z.promise(z.void())),
+    _process_subscription: z
+      .function()
+      .args(
+        UnionIDSchema,
+        z.instanceof(Subscription),
+        z.boolean(),
+        z
+          .tuple([CoordinatorSignatureParamsSchema, z.record(z.any())])
+          .optional()
+      )
+      .returns(z.promise(z.void())),
+    track: z.function().args(OnchainMessageSchema).returns(z.promise(z.void())),
+    run_forever: z.function().returns(z.promise(z.void())),
+    setup: z.function().returns(z.void()),
+    cleanup: z.function().returns(z.void()),
+  };
+
   #rpc: z.infer<typeof ChainProcessor.fieldSchemas._rpc>;
   #coordinator: z.infer<typeof ChainProcessor.fieldSchemas._coordinator>;
   #wallet: z.infer<typeof ChainProcessor.fieldSchemas._wallet>;
@@ -198,416 +302,394 @@ export class ChainProcessor extends AsyncTask {
     );
   }
 
-  /**
-   * Tracks SubscriptionCreatedMessage.
-   *
-   * Process:
-   * 1. Adds subscription to tracked _subscriptions
-   */
-  #track_created_message(msg: SubscriptionCreatedMessage): void {
-    this.#subscriptions[msg.subscription.id] = msg.subscription;
+  // Tracks SubscriptionCreatedMessage.
+  #track_created_message =
+    ChainProcessor.methodSchemas._track_created_message.implement((msg) => {
+      this.#subscriptions[msg.subscription.id] = msg.subscription;
 
-    console.info('Tracked new subscription!', {
-      id: msg.subscription.id,
-      total: Object.keys(this.#subscriptions).length,
+      console.info('Tracked new subscription!', {
+        id: msg.subscription.id,
+        total: Object.keys(this.#subscriptions).length,
+      });
     });
-  }
 
-  /**
-   * Tracks DelegatedSubscriptionMessage.
-   *
-   * Process:
-   * 1. Checks if delegated subscription already exists on-chain.
-   *    1.1. If so, evicts relevant run from pending and attempts to allow forced re-execution.
-   * 2. Collects recovered signer from signature.
-   * 3. Collects delegated signer from chain.
-   * 4. Verifies that recovered signer == delegated signer.
-   * 5. If verified, adds subscription to _delegate_subscriptions, indexed by (owner, nonce).
-   */
-  async #track_delegated_message(
-    msg: DelegatedSubscriptionMessage
-  ): Promise<void> {
-    const subscription: Subscription = msg.subscription.deserialize(
-      this.#container_lookup
-    );
-    const { signature } = msg;
-    const headBlock = await this.#rpc.get_head_block_number();
-    const [exists, id] =
-      await this.#coordinator.get_existing_delegate_subscription(
-        subscription,
-        signature,
-        headBlock
-      );
-
-    if (exists) {
-      // Check if subscription is tracked locally, this can happen if the
-      // user made a delegated subscription request again through the rest API,
-      // or if another node had already created the same delegated subscription.
-      const tracked = this.#subscriptions[id];
-
-      console.info('Delegated subscription exists on-chain', {
-        id,
-        tracked,
-      });
-
-      const key = makePendingOrAttemptsKey(
-        [subscription.owner, signature.nonce],
-        subscription.interval
-      );
-
-      if (this.#pending[key]) {
-        delete this.#pending[key];
-
-        console.info('Evicted past pending subscription tx', {
-          run: key,
-        });
-      }
-
-      if (this.#attempts[key]) {
-        delete this.#attempts[key];
-
-        console.info('Evicted past pending subscription attempts', {
-          run: key,
-        });
-      }
-    } else {
-      let recoveredSigner;
-
-      try {
-        recoveredSigner = await this.#coordinator.recover_delegatee_signer(
-          subscription,
-          signature
+  // Tracks DelegatedSubscriptionMessage.
+  #track_delegated_message =
+    ChainProcessor.methodSchemas._track_delegated_message.implement(
+      async (msg) => {
+        const subscription: Subscription = msg.subscription.deserialize(
+          this.#container_lookup
         );
+        const { signature } = msg;
+        const headBlock = await this.#rpc.get_head_block_number();
+        const [exists, id] =
+          await this.#coordinator.get_existing_delegate_subscription(
+            subscription,
+            signature,
+            headBlock
+          );
 
-        console.debug('Recovered delegatee signer', {
-          address: recoveredSigner,
-        });
-      } catch (err) {
-        console.error('Could not recover delegatee signer', {
-          subscription,
-          signature,
-        });
+        if (exists) {
+          // Check if subscription is tracked locally, this can happen if the
+          // user made a delegated subscription request again through the rest API,
+          // or if another node had already created the same delegated subscription.
+          const tracked = this.#subscriptions[id];
 
-        return;
-      }
+          console.info('Delegated subscription exists on-chain', {
+            id,
+            tracked,
+          });
 
-      const delegatedSigner = await this.#coordinator.get_delegated_signer(
-        subscription,
-        headBlock
-      );
+          const key = makePendingOrAttemptsKey(
+            [subscription.owner, signature.nonce],
+            subscription.interval
+          );
 
-      console.debug('Collected delegated signer', {
-        address: delegatedSigner,
-      });
+          if (this.#pending[key]) {
+            delete this.#pending[key];
 
-      if (recoveredSigner !== delegatedSigner) {
-        console.error('Subscription signer mismatch', {
-          recovered: recoveredSigner,
-          delegated: delegatedSigner,
-        });
+            console.info('Evicted past pending subscription tx', {
+              run: key,
+            });
+          }
 
-        return;
-      } else {
-        const subId = makeDelegateSubscriptionsKey(
-          subscription.owner,
-          signature.nonce
-        );
+          if (this.#attempts[key]) {
+            delete this.#attempts[key];
 
-        this.#delegate_subscriptions[subId] = [
-          subscription,
-          signature,
-          msg.data,
-        ];
+            console.info('Evicted past pending subscription attempts', {
+              run: key,
+            });
+          }
+        } else {
+          let recoveredSigner;
 
-        console.info('Tracked new delegate subscription', { sub_id: subId });
-      }
-    }
-  }
+          try {
+            recoveredSigner = await this.#coordinator.recover_delegatee_signer(
+              subscription,
+              signature
+            );
 
-  /**
-   * Checks whether node has responded on-chain in interval (non-pending).
-   */
-  async #has_responded_onchain_in_interval(
-    subscription_id: SubscriptionID
-  ): Promise<boolean> {
-    const sub = this.#subscriptions[subscription_id];
-    const subInterval = sub.interval;
+            console.debug('Recovered delegatee signer', {
+              address: recoveredSigner,
+            });
+          } catch (err) {
+            console.error('Could not recover delegatee signer', {
+              subscription,
+              signature,
+            });
 
-    if (sub.get_node_replied(subInterval)) return true;
+            return;
+          }
 
-    const headBlock = await this.#rpc.get_head_block_number();
-    const nodeResponded =
-      await this.#coordinator.get_node_has_delivered_response(
-        subscription_id,
-        subInterval,
-        this.#wallet.address,
-        headBlock
-      );
+          const delegatedSigner = await this.#coordinator.get_delegated_signer(
+            subscription,
+            headBlock
+          );
 
-    if (nodeResponded) {
-      console.info('Node has already responded for this interval', {
-        id: sub.id,
-        interval: subInterval,
-      });
+          console.debug('Collected delegated signer', {
+            address: delegatedSigner,
+          });
 
-      sub.set_node_replied(subInterval);
-    }
+          if (recoveredSigner !== delegatedSigner) {
+            console.error('Subscription signer mismatch', {
+              recovered: recoveredSigner,
+              delegated: delegatedSigner,
+            });
 
-    return nodeResponded;
-  }
-
-  /**
-   * Prunes pending txs that have failed to allow for re-processing.
-   *
-   * Process:
-   * 1. Checks for txs that are non-blocked, found on-chain, and failed.
-   * 2. Increments self._attempts dict.
-   * 3. If self._attempts[tx] < 3, evicts failed tx else keeps blocked.
-   */
-  async #prune_failed_txs(): Promise<void> {
-    const failedTxs: string[] = [];
-
-    await this.#attempts_lock.runExclusive(async () => {
-      const pendingCopy = cloneDeep(this.#pending);
-      const pendingCopyKeys = Object.keys(pendingCopy);
-
-      for (let i = 0; i < pendingCopyKeys.length; i++) {
-        const key = pendingCopyKeys[i];
-        const txHash = pendingCopy[key];
-
-        if (txHash !== BLOCKED) {
-          const [found, success] = await this.#rpc.get_tx_success(txHash);
-
-          if (!found) continue;
-          if (success) {
-            if (this.#attempts[key]) delete this.#attempts[key];
+            return;
           } else {
-            failedTxs.push(key);
+            const subId = makeDelegateSubscriptionsKey(
+              subscription.owner,
+              signature.nonce
+            );
+
+            this.#delegate_subscriptions[subId] = [
+              subscription,
+              signature,
+              msg.data,
+            ];
+
+            console.info('Tracked new delegate subscription', {
+              sub_id: subId,
+            });
           }
         }
       }
+    );
 
-      // Evict failed txs.
-      failedTxs.forEach((key) => {
-        if (this.#attempts[key]) {
-          this.#attempts[key] += 1;
-        } else {
-          this.#attempts[key] = 1;
+  // Checks whether node has responded on-chain in interval (non-pending).
+  #has_responded_onchain_in_interval =
+    ChainProcessor.methodSchemas._has_responded_onchain_in_interval.implement(
+      async (subscription_id) => {
+        const sub = this.#subscriptions[subscription_id];
+        const subInterval = sub.interval;
+
+        if (sub.get_node_replied(subInterval)) return true;
+
+        const headBlock = await this.#rpc.get_head_block_number();
+        const nodeResponded =
+          await this.#coordinator.get_node_has_delivered_response(
+            subscription_id,
+            subInterval,
+            this.#wallet.address,
+            headBlock
+          );
+
+        if (nodeResponded) {
+          console.info('Node has already responded for this interval', {
+            id: sub.id,
+            interval: subInterval,
+          });
+
+          sub.set_node_replied(subInterval);
         }
 
-        const attemptCount = this.#attempts[key];
+        return nodeResponded;
+      }
+    );
 
-        console.debug('attempt count', { count: attemptCount, key });
+  // Prunes pending txs that have failed to allow for re-processing.
+  #prune_failed_txs = ChainProcessor.methodSchemas._prune_failed_txs.implement(
+    async () => {
+      const failedTxs: string[] = [];
 
-        // Evict failed tx if it has less than 3 failed attempts so that it can be reprocessed.
-        if (attemptCount < 3) {
-          const [id, interval] = parsePendingOrAttemptsKey(key);
-          const txHash = this.#pending[key];
+      await this.#attempts_lock.runExclusive(async () => {
+        const pendingCopy = cloneDeep(this.#pending);
+        const pendingCopyKeys = Object.keys(pendingCopy);
 
-          delete this.#pending[key];
+        for (let i = 0; i < pendingCopyKeys.length; i++) {
+          const key = pendingCopyKeys[i];
+          const txHash = pendingCopy[key];
 
-          console.info('Evicted failed tx', {
-            id,
-            interval,
-            tx_hash: txHash,
-            retries: attemptCount,
+          if (txHash !== BLOCKED) {
+            const [found, success] = await this.#rpc.get_tx_success(txHash);
+
+            if (!found) continue;
+            if (success) {
+              if (this.#attempts[key]) delete this.#attempts[key];
+            } else {
+              failedTxs.push(key);
+            }
+          }
+        }
+
+        // Evict failed txs.
+        failedTxs.forEach((key) => {
+          if (this.#attempts[key]) {
+            this.#attempts[key] += 1;
+          } else {
+            this.#attempts[key] = 1;
+          }
+
+          const attemptCount = this.#attempts[key];
+
+          console.debug('attempt count', { count: attemptCount, key });
+
+          // Evict failed tx if it has less than 3 failed attempts so that it can be reprocessed.
+          if (attemptCount < 3) {
+            const [id, interval] = parsePendingOrAttemptsKey(key);
+            const txHash = this.#pending[key];
+
+            delete this.#pending[key];
+
+            console.info('Evicted failed tx', {
+              id,
+              interval,
+              tx_hash: txHash,
+              retries: attemptCount,
+            });
+          }
+        });
+      });
+    }
+  );
+
+  // Stops tracking subscription or delegated subscription.
+  #stop_tracking = ChainProcessor.methodSchemas._stop_tracking.implement(
+    (subscription_id, delegated) => {
+      const subIdKey = Array.isArray(subscription_id)
+        ? makeDelegateSubscriptionsKey(subscription_id[0], subscription_id[1])
+        : `${subscription_id}`;
+
+      if (delegated) {
+        if (this.#delegate_subscriptions[subIdKey])
+          delete this.#delegate_subscriptions[subIdKey];
+      } else {
+        if (this.#subscriptions[subIdKey]) delete this.#subscriptions[subIdKey];
+      }
+
+      const pendingKeys = Object.keys(this.#pending);
+
+      for (let i = 0; i < pendingKeys.length; i++) {
+        const pendingKey = pendingKeys[i];
+        const [pendingSubId, pendingInterval] =
+          parsePendingOrAttemptsKey(pendingKey);
+
+        // Convert `pendingSubId` into a string for equality comparison.
+        const pendingSubIdKey = Array.isArray(pendingSubId)
+          ? makeDelegateSubscriptionsKey(pendingSubId[0], pendingSubId[1])
+          : `${pendingSubId}`;
+
+        if (pendingSubIdKey === subIdKey) {
+          delete this.#pending[pendingKey];
+
+          console.debug('Deleted pending transactions being checked', {
+            id: subscription_id,
+            interval: pendingInterval,
           });
         }
-      });
-    });
-  }
-
-  /**
-   * Stops tracking subscription (or delegated subscription).
-   * 1. Deletes subscription from _subscriptions or _delegate_subscriptions.
-   * 2. Deletes any pending transactions being checked.
-   */
-  #stop_tracking(subscription_id: UnionID, delegated: boolean): void {
-    const subIdKey = Array.isArray(subscription_id)
-      ? makeDelegateSubscriptionsKey(subscription_id[0], subscription_id[1])
-      : `${subscription_id}`;
-
-    if (delegated) {
-      if (this.#delegate_subscriptions[subIdKey])
-        delete this.#delegate_subscriptions[subIdKey];
-    } else {
-      if (this.#subscriptions[subIdKey]) delete this.#subscriptions[subIdKey];
-    }
-
-    const pendingKeys = Object.keys(this.#pending);
-
-    for (let i = 0; i < pendingKeys.length; i++) {
-      const pendingKey = pendingKeys[i];
-      const [pendingSubId, pendingInterval] =
-        parsePendingOrAttemptsKey(pendingKey);
-
-      // Convert `pendingSubId` into a string for equality comparison.
-      const pendingSubIdKey = Array.isArray(pendingSubId)
-        ? makeDelegateSubscriptionsKey(pendingSubId[0], pendingSubId[1])
-        : `${pendingSubId}`;
-
-      if (pendingSubIdKey === subIdKey) {
-        delete this.#pending[pendingKey];
-
-        console.debug('Deleted pending transactions being checked', {
-          id: subscription_id,
-          interval: pendingInterval,
-        });
       }
+
+      console.info(`Stopped tracking subscription: ${subscription_id}`, {
+        id: subscription_id,
+      });
     }
+  );
 
-    console.info(`Stopped tracking subscription: ${subscription_id}`, {
-      id: subscription_id,
-    });
-  }
+  // Checks if a subscription (or delegated subscription) has a pending tx for current interval.
+  #has_subscription_tx_pending_in_interval =
+    ChainProcessor.methodSchemas._has_subscription_tx_pending_in_interval.implement(
+      (subscription_id) => {
+        let sub;
 
-  /**
-   * Checks if a subscription (or delegated subscription) has a pending tx for current interval.
-   */
-  #has_subscription_tx_pending_in_interval(subscription_id: UnionID): boolean {
-    let sub;
+        // Check whether `subscription_id` is of type `SubscriptionID` (a number).
+        if (typeof subscription_id === 'number') {
+          sub = this.#subscriptions[subscription_id];
+        } else {
+          [sub] =
+            this.#delegate_subscriptions[
+              makeDelegateSubscriptionsKey(
+                subscription_id[0],
+                subscription_id[1]
+              )
+            ];
+        }
 
-    // Check whether `subscription_id` is of type `SubscriptionID` (a number).
-    if (typeof subscription_id === 'number') {
-      sub = this.#subscriptions[subscription_id];
-    } else {
-      [sub] =
-        this.#delegate_subscriptions[
-          makeDelegateSubscriptionsKey(subscription_id[0], subscription_id[1])
-        ];
-    }
+        const pendingKey = makePendingOrAttemptsKey(
+          subscription_id,
+          sub.interval
+        );
 
-    const pendingKey = makePendingOrAttemptsKey(subscription_id, sub.interval);
-
-    return !!this.#pending[pendingKey];
-  }
-
-  /**
-   * Serializes container output param as bytes.
-   */
-  #serialize_param(input?: string) {
-    return stringToHex(input ?? '');
-  }
-
-  /**
-   * Serializes container output to conform to on-chain fn input.
-   *
-   * Process:
-   * 1. Check if all 5 keys are present in container output.
-   *    1.1. If so, parse returned output as raw bytes and generate returned data.
-   * 2. Else, serialize data into string and return as output.
-   */
-  #serialize_container_output(
-    containerOutput: ContainerOutput
-  ): [Hex, Hex, Hex] {
-    const { output } = containerOutput;
-    const outputKeys = Object.keys(output).reduce(
-      (acc, val) => ({
-        ...acc,
-        [val]: true,
-      }),
-      {}
+        return !!this.#pending[pendingKey];
+      }
     );
-    const allKeysExist = RESPONSE_KEYS.every((key) => outputKeys[key]);
 
-    if (allKeysExist) {
-      return [
-        encodeAbiParameters(
-          [
-            {
-              type: 'bytes',
-            },
-            {
-              type: 'bytes',
-            },
-          ],
-          [
-            this.#serialize_param(output['raw_input']),
-            this.#serialize_param(output['processed_input']),
-          ]
-        ),
-        encodeAbiParameters(
-          [
-            {
-              type: 'bytes',
-            },
-            {
-              type: 'bytes',
-            },
-          ],
-          [
-            this.#serialize_param(output['raw_output']),
-            this.#serialize_param(output['processed_output']),
-          ]
-        ),
-        this.#serialize_param(output['proof']),
-      ];
-    }
+  // Serializes container output param as bytes.
+  #serialize_param = ChainProcessor.methodSchemas._serialize_param.implement(
+    (input) => stringToHex(input ?? '')
+  );
 
-    return [
-      stringToHex(''),
-      encodeAbiParameters([{ type: 'string' }], [JSON.stringify(output)]),
-      stringToHex(''),
-    ];
-  }
+  // Serializes container output to conform to on-chain fn input.
+  #serialize_container_output =
+    ChainProcessor.methodSchemas._serialize_container_output.implement(
+      (containerOutput) => {
+        const { output } = containerOutput;
+        const outputKeys = Object.keys(output).reduce(
+          (acc, val) => ({
+            ...acc,
+            [val]: true,
+          }),
+          {}
+        );
+        const allKeysExist = RESPONSE_KEYS.every((key) => outputKeys[key]);
 
-  /**
-   * Check if the subscription owner can pay for the subscription. If not, stop
-   * tracking the subscription. Checks for:
-   * 1. Invalid wallet.
-   * 2. Insufficient balance.
-   */
-  async #stop_tracking_if_sub_owner_cant_pay(
-    sub_id: SubscriptionID
-  ): Promise<boolean> {
-    const sub = this.#subscriptions[sub_id];
+        if (allKeysExist) {
+          return [
+            encodeAbiParameters(
+              [
+                {
+                  type: 'bytes',
+                },
+                {
+                  type: 'bytes',
+                },
+              ],
+              [
+                this.#serialize_param(output['raw_input']),
+                this.#serialize_param(output['processed_input']),
+              ]
+            ),
+            encodeAbiParameters(
+              [
+                {
+                  type: 'bytes',
+                },
+                {
+                  type: 'bytes',
+                },
+              ],
+              [
+                this.#serialize_param(output['raw_output']),
+                this.#serialize_param(output['processed_output']),
+              ]
+            ),
+            this.#serialize_param(output['proof']),
+          ];
+        }
 
-    if (!sub) return true;
-    if (!sub.provides_payment) return false;
+        return [
+          stringToHex(''),
+          encodeAbiParameters([{ type: 'string' }], [JSON.stringify(output)]),
+          stringToHex(''),
+        ];
+      }
+    );
 
-    const banner = `Skipping subscription: ${sub_id}`;
+  // Check if the subscription owner can pay for the subscription. If not, stop tracking the subscription.
+  #stop_tracking_if_sub_owner_cant_pay =
+    ChainProcessor.methodSchemas._stop_tracking_if_sub_owner_cant_pay.implement(
+      async (sub_id) => {
+        const sub = this.#subscriptions[sub_id];
 
-    if (!(await this.#wallet_checker.is_valid_wallet(sub.wallet))) {
-      console.info(
-        `
+        if (!sub) return true;
+        if (!sub.provides_payment) return false;
+
+        const banner = `Skipping subscription: ${sub_id}`;
+
+        if (!(await this.#wallet_checker.is_valid_wallet(sub.wallet))) {
+          console.info(
+            `
         ${banner}: Invalid subscription wallet, please use a wallet generated
         by infernet's \`WalletFactory\``,
-        {
-          sub_id: sub.id,
-          wallet: sub.wallet,
+            {
+              sub_id: sub.id,
+              wallet: sub.wallet,
+            }
+          );
+
+          this.#stop_tracking(sub.id, false);
+
+          return true;
         }
-      );
 
-      this.#stop_tracking(sub.id, false);
+        const [hasBalance, balance] =
+          await this.#wallet_checker.has_enough_balance(
+            sub.wallet,
+            sub.payment_token,
+            sub.payment_amount
+          );
 
-      return true;
-    }
+        if (!hasBalance) {
+          console.info(
+            `${banner}: Subscription wallet has insufficient balance`,
+            {
+              sub_id: sub.id,
+              wallet: sub.wallet,
+              sub_amount: sub.payment_amount,
+              wallet_balance: balance,
+            }
+          );
 
-    const [hasBalance, balance] = await this.#wallet_checker.has_enough_balance(
-      sub.wallet,
-      sub.payment_token,
-      sub.payment_amount
+          this.#stop_tracking(sub.id, false);
+
+          return true;
+        }
+
+        return false;
+      }
     );
 
-    if (!hasBalance) {
-      console.info(`${banner}: Subscription wallet has insufficient balance`, {
-        sub_id: sub.id,
-        wallet: sub.wallet,
-        sub_amount: sub.payment_amount,
-        wallet_balance: balance,
-      });
-
-      this.#stop_tracking(sub.id, false);
-
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Check if the subscription has been cancelled on-chain, if so, stop tracking it.
-   */
+  // Check if the subscription has been cancelled on-chain, if so, stop tracking it.
   async #stop_tracking_if_cancelled(sub_id: SubscriptionID): Promise<boolean> {
     const sub: Subscription = await this.#coordinator.get_subscription_by_id(
       sub_id,
@@ -625,453 +707,413 @@ export class ChainProcessor extends AsyncTask {
     return false;
   }
 
-  /**
-   * Check if the delegated subscription has already been completed. If so, stop
-   * tracking it.
-   *
-   * Note that delegated subscriptions may not have a subscription id yet generated,
-   * since we allow for delegated subscriptions to be created & fulfilled in the same
-   * transaction. In such cases, we use the owner-nonce pair as the subscription id.
-   *
-   * For delegated subscriptions, we only check if the transaction has already been
-   * submitted and was successful.
-   * 1. For one-off delegated subscriptions (where redundancy=1 & frequency =1),
-   * this is sufficient.
-   * 2. For recurring delegated subscriptions (redundancy>1 or frequency>1),
-   * the same subscription will get tracked again as it will show up on-chain
-   * & will get picked up by the listener. Past that point, the tracking of that
-   * subscription will be handled by the regular subscription tracking logic.
-   */
-  async #stop_tracking_delegated_sub_if_completed(
-    sub_id: DelegateSubscriptionID
-  ): Promise<boolean> {
-    const [sub]: DelegateSubscriptionData =
-      this.#delegate_subscriptions[
-        makeDelegateSubscriptionsKey(sub_id[0], sub_id[1])
-      ];
-    const txHash =
-      this.#pending[makePendingOrAttemptsKey(sub_id, sub.interval)];
+  // Check if the delegated subscription has already been completed. If so, stop tracking it.
+  #stop_tracking_delegated_sub_if_completed =
+    ChainProcessor.methodSchemas._stop_tracking_delegated_sub_if_completed.implement(
+      async (sub_id) => {
+        const [sub]: DelegateSubscriptionData =
+          this.#delegate_subscriptions[
+            makeDelegateSubscriptionsKey(sub_id[0], sub_id[1])
+          ];
+        const txHash =
+          this.#pending[makePendingOrAttemptsKey(sub_id, sub.interval)];
 
-    // We have not yet submitted the transaction for this delegated subscription.
-    if (!txHash || txHash === BLOCKED) return false;
+        // We have not yet submitted the transaction for this delegated subscription.
+        if (!txHash || txHash === BLOCKED) return false;
 
-    const [found, success] = await this.#rpc.get_tx_success_with_retries(
-      txHash
-    );
-
-    // We have already submitted the transaction and it was successful.
-    if (found && success) {
-      console.info('Delegated subscription completed for interval', {
-        id: sub_id,
-        interval: sub.interval,
-      });
-
-      this.#stop_tracking(sub_id, true);
-
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Check if the subscription has already been completed. If so, stop tracking it.
-   *
-   * This updates the response count for the subscription by reading it from on-chain
-   * storage. If the subscription has already been completed, it stops tracking it.
-   */
-  async #stop_tracking_sub_if_completed(
-    subscription: Subscription
-  ): Promise<boolean> {
-    const { id } = subscription;
-    const interval = subscription.interval;
-    const responseCount =
-      await this.#coordinator.get_subscription_response_count(id, interval, 0n);
-
-    subscription.set_response_count(interval, responseCount);
-
-    if (subscription.completed) {
-      console.info('Subscription already completed', {
-        id,
-        interval,
-      });
-
-      this.#stop_tracking(id, false);
-
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Check if the subscription has exceeded the maximum number of attempts. If so,
-   * stop tracking it.
-   */
-  async #stop_tracking_if_maximum_retries_reached(
-    sub_key: [UnionID, Interval],
-    delegated: boolean
-  ): Promise<boolean> {
-    const key = makePendingOrAttemptsKey(sub_key[0], sub_key[1]);
-
-    if (this.#attempts[key]) {
-      const attemptCount = this.#attempts[key];
-
-      if (attemptCount >= 3) {
-        console.error(
-          'Subscription has exceeded the maximum number of attempts',
-          {
-            id: sub_key[0],
-            interval: sub_key[1],
-            tx_hash: this.#pending[key],
-            attempts: attemptCount,
-          }
+        const [found, success] = await this.#rpc.get_tx_success_with_retries(
+          txHash
         );
 
-        console.info('Clearing attempts', { sub_key });
+        // We have already submitted the transaction and it was successful.
+        if (found && success) {
+          console.info('Delegated subscription completed for interval', {
+            id: sub_id,
+            interval: sub.interval,
+          });
 
-        delete this.#attempts[key];
+          this.#stop_tracking(sub_id, true);
 
-        await this.#attempts_lock.runExclusive(async () => {
-          // Delete subcription.
-          this.#stop_tracking(sub_key[0], delegated);
-        });
+          return true;
+        }
 
-        return true;
+        return false;
       }
-    }
-
-    return false;
-  }
-
-  /**
-   * Check if the subscription has missed the deadline. If so, stop tracking it.
-   */
-  #stop_tracking_sub_if_missed_deadline(
-    subscription_id: UnionID,
-    delegated: boolean
-  ): boolean {
-    let subscription: Subscription;
-
-    if (!delegated && typeof subscription_id === 'number') {
-      subscription = this.#subscriptions[subscription_id as SubscriptionID];
-    } else {
-      [subscription] =
-        this.#delegate_subscriptions[
-          makeDelegateSubscriptionsKey(subscription_id[0], subscription_id[1])
-        ];
-    }
-
-    // Checking if subscription is falsy is necessary because the subscription may have
-    // been deleted in `#process_subscription`.
-    if (!subscription) return true;
-
-    if (subscription.past_last_interval) {
-      console.info('Subscription expired', {
-        id: subscription.id,
-        interval: subscription.interval,
-      });
-
-      this.#stop_tracking(subscription_id, delegated);
-
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * We first attempt a delivery with empty (input, output, proof) to check if there
-   * are any infernet-related errors caught during the transaction simulation. This
-   * allows us to catch a multitude of errors even if we had run the compute. This
-   * prevents the node from wasting resources on a compute that would have failed
-   * on-chain.
-   */
-  async #stop_tracking_if_infernet_errors_caught_in_simulation(
-    subscription: Subscription,
-    delegated: boolean,
-    signature?: CoordinatorSignatureParams
-  ): Promise<boolean> {
-    if (subscription.requires_proof) return false;
-
-    try {
-      await this.#deliver(subscription, delegated, signature, true);
-    } catch (err) {
-      if (err instanceof InfernetError && subscription.is_callback) {
-        this.#stop_tracking(subscription.id, delegated);
-
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Deliver the compute to the chain.
-   */
-  async #deliver(
-    subscription: Subscription,
-    delegated: boolean,
-    signature: CoordinatorSignatureParams | undefined,
-    simulate_only: boolean,
-    input: Hex = '0x',
-    output: Hex = '0x',
-    proof: Hex = '0x'
-  ): Promise<Hex> {
-    let txHash;
-
-    if (delegated && signature) {
-      txHash = await this.#wallet.deliver_compute_delegatee(
-        subscription,
-        signature,
-        input,
-        output,
-        proof,
-        simulate_only
-      );
-    } else {
-      txHash = await this.#wallet.deliver_compute(
-        subscription,
-        input,
-        output,
-        proof,
-        simulate_only
-      );
-    }
-
-    return txHash;
-  }
-
-  /**
-   * Execute containers for the subscription.
-   */
-  async #execute_on_containers(
-    subscription: Subscription,
-    delegated: boolean,
-    delegated_params?: [
-      CoordinatorSignatureParams,
-      {
-        [key: string]: any;
-      }
-    ]
-  ): Promise<(ContainerError | ContainerOutput)[]> {
-    let containerInput: JobInput;
-
-    if (delegated && delegated_params) {
-      containerInput = {
-        source: JobLocation.OFFCHAIN,
-        destination: JobLocation.ONCHAIN,
-        data: delegated_params[1],
-      };
-    } else {
-      const chainInput: Hex = await this.#coordinator.get_container_inputs(
-        subscription,
-        subscription.interval,
-        getUnixTimestamp(),
-        this.#wallet.address
-      );
-
-      containerInput = {
-        source: JobLocation.ONCHAIN,
-        destination: JobLocation.ONCHAIN,
-        data: chainInput,
-      };
-    }
-
-    console.debug('Setup container input', {
-      id: subscription.id,
-      interval: subscription.interval,
-      input: containerInput,
-    });
-
-    return this.#orchestrator.process_chain_processor_job(
-      subscription.id,
-      containerInput,
-      subscription.containers,
-      subscription.requires_proof
     );
-  }
 
-  async #escrow_reward_in_wallet(subscription: Subscription): Promise<void> {
-    console.info('Escrowing reward in wallet', {
-      id: subscription.id,
-      token: subscription.payment_token,
-      amount: subscription.payment_amount,
-      spender: this.#registry.coordinator(),
-    });
+  // Check if the subscription has already been completed. If so, stop tracking it.
+  #stop_tracking_sub_if_completed =
+    ChainProcessor.methodSchemas._stop_tracking_sub_if_completed.implement(
+      async (subscription) => {
+        const { id } = subscription;
+        const interval = subscription.interval;
+        const responseCount =
+          await this.#coordinator.get_subscription_response_count(
+            id,
+            interval,
+            0n
+          );
 
-    await this.#payment_wallet.approve(
-      this.#rpc.account(),
-      subscription.payment_token,
-      BigInt(subscription.payment_amount)
-    );
-  }
+        subscription.set_response_count(interval, responseCount);
 
-  /**
-   * Processes subscription (collects inputs, runs containers, posts output
-   * on-chain).
-   *
-   * Process:
-   * 1. Toggle pending execution for interval by blocking this.#pending.
-   * 2. Collect latest input parameters, if needed, from chain.
-   * 3. Execute relevant containers via orchestrator.
-   * 4. Serialize container response.
-   * 5. Send deliver_compute (or delivate_compute_delegatee if delegated
-   * subscription) tx via wallet.
-   * 6. Update self._pending with accurate tx hash.
-   */
-  async #process_subscription(
-    id: UnionID,
-    subscription: Subscription,
-    delegated: boolean,
-    delegated_params?: [
-      CoordinatorSignatureParams,
-      {
-        [key: string]: any;
+        if (subscription.completed) {
+          console.info('Subscription already completed', {
+            id,
+            interval,
+          });
+
+          this.#stop_tracking(id, false);
+
+          return true;
+        }
+
+        return false;
       }
-    ]
-  ): Promise<void> {
-    const interval = subscription.interval;
+    );
 
-    console.info('Processing subscription', {
-      id,
-      interval,
-      delegated,
-    });
+  // Check if the subscription has exceeded the maximum number of attempts. If so, stop tracking it.
+  #stop_tracking_if_maximum_retries_reached =
+    ChainProcessor.methodSchemas._stop_tracking_if_maximum_retries_reached.implement(
+      async (sub_key, delegated) => {
+        const key = makePendingOrAttemptsKey(sub_key[0], sub_key[1]);
 
-    // Check if we missed the subscription deadline.
-    if (await this.#stop_tracking_sub_if_missed_deadline(id, delegated)) return;
+        if (this.#attempts[key]) {
+          const attemptCount = this.#attempts[key];
 
-    const pendingKey = makePendingOrAttemptsKey(id, interval);
-    this.#pending[pendingKey] = BLOCKED;
+          if (attemptCount >= 3) {
+            console.error(
+              'Subscription has exceeded the maximum number of attempts',
+              {
+                id: sub_key[0],
+                interval: sub_key[1],
+                tx_hash: this.#pending[key],
+                attempts: attemptCount,
+              }
+            );
 
-    if (
-      await this.#stop_tracking_if_infernet_errors_caught_in_simulation(
-        subscription,
-        delegated,
-        delegated_params ? delegated_params[0] : undefined
-      )
-    )
-      return;
+            console.info('Clearing attempts', { sub_key });
 
-    const containerResults = await this.#execute_on_containers(
+            delete this.#attempts[key];
+
+            await this.#attempts_lock.runExclusive(async () => {
+              // Delete subcription.
+              this.#stop_tracking(sub_key[0], delegated);
+            });
+
+            return true;
+          }
+        }
+
+        return false;
+      }
+    );
+
+  // Check if the subscription has missed the deadline. If so, stop tracking it.
+  #stop_tracking_sub_if_missed_deadline =
+    ChainProcessor.methodSchemas._stop_tracking_sub_if_missed_deadline.implement(
+      (subscription_id, delegated) => {
+        let subscription: Subscription;
+
+        if (!delegated && typeof subscription_id === 'number') {
+          subscription = this.#subscriptions[subscription_id as SubscriptionID];
+        } else {
+          [subscription] =
+            this.#delegate_subscriptions[
+              makeDelegateSubscriptionsKey(
+                subscription_id[0],
+                subscription_id[1]
+              )
+            ];
+        }
+
+        // Checking if subscription is falsy is necessary because the subscription may have
+        // been deleted in `#process_subscription`.
+        if (!subscription) return true;
+
+        if (subscription.past_last_interval) {
+          console.info('Subscription expired', {
+            id: subscription.id,
+            interval: subscription.interval,
+          });
+
+          this.#stop_tracking(subscription_id, delegated);
+
+          return true;
+        }
+
+        return false;
+      }
+    );
+
+  // Simulate a deliver compute tx, and stop tracking if it reverts with an infernet-related error.
+  #stop_tracking_if_infernet_errors_caught_in_simulation =
+    ChainProcessor.methodSchemas._stop_tracking_if_infernet_errors_caught_in_simulation.implement(
+      async (subscription, delegated, signature) => {
+        if (subscription.requires_proof) return false;
+
+        try {
+          await this.#deliver(
+            subscription,
+            delegated,
+            signature,
+            true,
+            undefined,
+            undefined,
+            undefined
+          );
+        } catch (err) {
+          if (err instanceof InfernetError && subscription.is_callback) {
+            this.#stop_tracking(subscription.id, delegated);
+
+            return true;
+          }
+        }
+
+        return false;
+      }
+    );
+
+  // Deliver the compute to the chain.
+  #deliver = ChainProcessor.methodSchemas._deliver.implement(
+    async (
       subscription,
       delegated,
-      delegated_params
+      signature,
+      simulate_only,
+      input,
+      output,
+      proof
+    ) => {
+      let txHash;
+
+      if (delegated && signature) {
+        txHash = await this.#wallet.deliver_compute_delegatee(
+          subscription,
+          signature,
+          input,
+          output,
+          proof,
+          simulate_only
+        );
+      } else {
+        txHash = await this.#wallet.deliver_compute(
+          subscription,
+          input,
+          output,
+          proof,
+          simulate_only
+        );
+      }
+
+      return txHash;
+    }
+  );
+
+  // Execute containers for the subscription.
+  #execute_on_containers =
+    ChainProcessor.methodSchemas._execute_on_containers.implement(
+      async (subscription, delegated, delegated_params) => {
+        let containerInput: JobInput;
+
+        if (delegated && delegated_params) {
+          containerInput = {
+            source: JobLocation.OFFCHAIN,
+            destination: JobLocation.ONCHAIN,
+            data: delegated_params[1],
+          };
+        } else {
+          const chainInput: Hex = await this.#coordinator.get_container_inputs(
+            subscription,
+            subscription.interval,
+            getUnixTimestamp(),
+            this.#wallet.address
+          );
+
+          containerInput = {
+            source: JobLocation.ONCHAIN,
+            destination: JobLocation.ONCHAIN,
+            data: chainInput,
+          };
+        }
+
+        console.debug('Setup container input', {
+          id: subscription.id,
+          interval: subscription.interval,
+          input: containerInput,
+        });
+
+        return this.#orchestrator.process_chain_processor_job(
+          subscription.id,
+          containerInput,
+          subscription.containers,
+          subscription.requires_proof
+        );
+      }
     );
 
-    // Check if some container response received. If none, prevent blocking pending queue and return.
-    if (!containerResults.length) {
-      console.error('Container results empty', { id, interval });
+  #escrow_reward_in_wallet =
+    ChainProcessor.methodSchemas._escrow_reward_in_wallet.implement(
+      async (subscription) => {
+        console.info('Escrowing reward in wallet', {
+          id: subscription.id,
+          token: subscription.payment_token,
+          amount: subscription.payment_amount,
+          spender: this.#registry.coordinator(),
+        });
 
-      delete this.#pending[pendingKey];
+        await this.#payment_wallet.approve(
+          this.#rpc.account(),
+          subscription.payment_token,
+          BigInt(subscription.payment_amount)
+        );
+      }
+    );
 
-      return;
-    }
+  // Processes subscription (collects inputs, runs containers, posts output on-chain).
+  #process_subscription =
+    ChainProcessor.methodSchemas._process_subscription.implement(
+      async (id, subscription, delegated, delegated_params) => {
+        const interval = subscription.interval;
 
-    const lastResult = containerResults.pop() as
-      | ContainerError
-      | ContainerOutput;
-    const subscriptionIsCallback = subscription.is_callback;
+        console.info('Processing subscription', {
+          id,
+          interval,
+          delegated,
+        });
 
-    // Check for container error. If error, prevent blocking pending queue and return.
-    if ('error' in lastResult) {
-      console.error('Container execution errored', {
-        id,
-        interval,
-        err: lastResult,
-      });
+        // Check if we missed the subscription deadline.
+        if (await this.#stop_tracking_sub_if_missed_deadline(id, delegated))
+          return;
 
-      delete this.#pending[pendingKey];
+        const pendingKey = makePendingOrAttemptsKey(id, interval);
+        this.#pending[pendingKey] = BLOCKED;
 
-      if (subscriptionIsCallback)
-        this.#stop_tracking(subscription.id, delegated);
+        if (
+          await this.#stop_tracking_if_infernet_errors_caught_in_simulation(
+            subscription,
+            delegated,
+            delegated_params ? delegated_params[0] : undefined
+          )
+        )
+          return;
 
-      return;
-    } else if (lastResult.output.code && lastResult.output.code !== '200') {
-      console.error('Container execution errored', {
-        id,
-        interval,
-        err: lastResult,
-      });
-
-      delete this.#pending[pendingKey];
-
-      if (subscriptionIsCallback)
-        this.#stop_tracking(subscription.id, delegated);
-
-      return;
-    } else {
-      console.info('Container execution succeeded', { id, interval });
-      console.debug('Container output', { last_result: lastResult });
-    }
-
-    if (subscription.requires_proof)
-      await this.#escrow_reward_in_wallet(subscription);
-
-    const [input, output, proof] = this.#serialize_container_output(lastResult);
-
-    let txHash;
-
-    try {
-      txHash = await this.#deliver(
-        subscription,
-        delegated,
-        delegated && delegated_params ? delegated_params[0] : undefined,
-        false,
-        input,
-        output,
-        proof
-      );
-    } catch (err: any) {
-      let revertError;
-
-      if (err instanceof BaseError)
-        revertError = err.walk(
-          (err) =>
-            err instanceof ContractFunctionRevertedError ||
-            err instanceof ContractFunctionExecutionError
+        const containerResults = await this.#execute_on_containers(
+          subscription,
+          delegated,
+          delegated_params
         );
 
-      // Transaction simulation failed. If it's a callback subscription, we can stop tracking it
-      // delegated subscriptions will expire instead.
-      if (err instanceof InfernetError || revertError) {
-        if (subscriptionIsCallback)
-          this.#stop_tracking(subscription.id, delegated);
+        // Check if some container response received. If none, prevent blocking pending queue and return.
+        if (!containerResults.length) {
+          console.error('Container results empty', { id, interval });
 
-        console.info('Did not send tx', {
-          subscription,
-          id,
-          interval,
-          delegated,
-        });
+          delete this.#pending[pendingKey];
 
-        return;
-      } else {
-        console.error(`Failed to send tx ${err}`, {
-          subscription,
-          id,
-          interval,
-          delegated,
-        });
+          return;
+        }
 
-        if (subscriptionIsCallback)
-          this.#stop_tracking(subscription.id, delegated);
+        const lastResult = containerResults.pop() as
+          | ContainerError
+          | ContainerOutput;
+        const subscriptionIsCallback = subscription.is_callback;
 
-        return;
+        // Check for container error. If error, prevent blocking pending queue and return.
+        if ('error' in lastResult) {
+          console.error('Container execution errored', {
+            id,
+            interval,
+            err: lastResult,
+          });
+
+          delete this.#pending[pendingKey];
+
+          if (subscriptionIsCallback)
+            this.#stop_tracking(subscription.id, delegated);
+
+          return;
+        } else if (lastResult.output.code && lastResult.output.code !== '200') {
+          console.error('Container execution errored', {
+            id,
+            interval,
+            err: lastResult,
+          });
+
+          delete this.#pending[pendingKey];
+
+          if (subscriptionIsCallback)
+            this.#stop_tracking(subscription.id, delegated);
+
+          return;
+        } else {
+          console.info('Container execution succeeded', { id, interval });
+          console.debug('Container output', { last_result: lastResult });
+        }
+
+        if (subscription.requires_proof)
+          await this.#escrow_reward_in_wallet(subscription);
+
+        const [input, output, proof] =
+          this.#serialize_container_output(lastResult);
+
+        let txHash;
+
+        try {
+          txHash = await this.#deliver(
+            subscription,
+            delegated,
+            delegated && delegated_params ? delegated_params[0] : undefined,
+            false,
+            input,
+            output,
+            proof
+          );
+        } catch (err: any) {
+          let revertError;
+
+          if (err instanceof BaseError)
+            revertError = err.walk(
+              (err) =>
+                err instanceof ContractFunctionRevertedError ||
+                err instanceof ContractFunctionExecutionError
+            );
+
+          // Transaction simulation failed. If it's a callback subscription, we can stop tracking it
+          // delegated subscriptions will expire instead.
+          if (err instanceof InfernetError || revertError) {
+            if (subscriptionIsCallback)
+              this.#stop_tracking(subscription.id, delegated);
+
+            console.info('Did not send tx', {
+              subscription,
+              id,
+              interval,
+              delegated,
+            });
+
+            return;
+          } else {
+            console.error(`Failed to send tx ${err}`, {
+              subscription,
+              id,
+              interval,
+              delegated,
+            });
+
+            if (subscriptionIsCallback)
+              this.#stop_tracking(subscription.id, delegated);
+
+            return;
+          }
+        }
+
+        this.#pending[pendingKey] = txHash;
+
+        console.info('Sent tx', { id, interval, delegated, tx_hash: txHash });
       }
-    }
+    );
 
-    this.#pending[pendingKey] = txHash;
-
-    console.info('Sent tx', { id, interval, delegated, tx_hash: txHash });
-  }
-
-  /**
-   * Tracks incoming message by type.
-   */
-  async track(msg: OnchainMessage): Promise<void> {
+  // Tracks incoming message by type.
+  track = ChainProcessor.methodSchemas.track.implement(async (msg) => {
     switch (msg.type) {
       case MessageType.SubscriptionCreated:
         this.#track_created_message(msg);
@@ -1086,39 +1128,10 @@ export class ChainProcessor extends AsyncTask {
       default:
         console.error('Unknown message type to track', { message: msg });
     }
-  }
+  });
 
-  /**
-   * Core ChainProcessor event loop.
-   *
-   * Process:
-   * 1. Every 100ms (note: not most efficient implementation, should just
-   * trigger as needed):
-   *    For each subscription:
-   *        1.1. Prune pending txs that have failed.
-   *        1.2 If the node requires payment, check if the subscription has a
-   *            valid wallet and enough funds.
-   *        1.3 Check subscriptions that have been cancelled, and stop tracking.
-   *        1.4 Skip the inactive subscriptions.
-   *        1.5 Check if the subscription has already been completed, and stop
-   *            tracking.
-   *        1.6 Check if the subscription has passed the deadline, and stop
-   *            tracking.
-   *        1.7 Check if the subscription's transaction failure has exceeded the
-   *            maximum number of attempts, and if so, stop tracking.
-   *        1.8 Filter out ones where node has already submitted on-chain tx
-   *            for current interval, or has a pending tx submitted.
-   *        1.9 If all above checks pass, queue for processing.
-   *    For each delegated subscription:
-   *        1.1 Skip the inactive subscriptions.
-   *        1.2 Check if the delegated subscription has already been completed,
-   *            and stop tracking.
-   *        1.3 Check if the delegated subscription's transaction failure has
-   *            exceeded the maximum number of attempts, and if so, stop tracking.
-   *        1.4 Filter out ones where node has a pending tx submitted.
-   *        1.5 Queue for processing.
-   */
-  async run_forever(): Promise<void> {
+  // Core ChainProcessor event loop.
+  run_forever = ChainProcessor.methodSchemas.run_forever.implement(async () => {
     while (!this.shutdown) {
       this.#prune_failed_txs();
 
@@ -1166,7 +1179,12 @@ export class ChainProcessor extends AsyncTask {
           !this.#has_subscription_tx_pending_in_interval(subscriptionId) &&
           !(await this.#has_responded_onchain_in_interval(subscriptionId))
         ) {
-          this.#process_subscription(subscriptionId, subscription, false);
+          this.#process_subscription(
+            subscriptionId,
+            subscription,
+            false,
+            undefined
+          );
         }
       }
 
@@ -1226,9 +1244,9 @@ export class ChainProcessor extends AsyncTask {
 
       await delay(100);
     }
-  }
+  });
 
-  setup() {}
+  setup = ChainProcessor.methodSchemas.setup.implement(() => {});
 
-  cleanup() {}
+  cleanup = ChainProcessor.methodSchemas.cleanup.implement(() => {});
 }
