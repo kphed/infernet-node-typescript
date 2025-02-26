@@ -10,7 +10,11 @@ import {
 } from 'viem';
 import { Mutex } from 'async-mutex';
 import { cloneDeep } from 'lodash';
-import { Coordinator, CoordinatorSignatureParams } from './coordinator';
+import {
+  Coordinator,
+  CoordinatorSignatureParams,
+  CoordinatorSignatureParamsSchema,
+} from './coordinator';
 import { InfernetError } from './errors';
 import { PaymentWallet } from './paymentWallet';
 import { Registry } from './registry';
@@ -34,10 +38,86 @@ import { AsyncTask } from '../shared/service';
 import { Subscription } from '../shared/subscription';
 import { ContainerLookup } from './containerLookup';
 import { getUnixTimestamp, delay } from '../utils/helpers';
+import { HexSchema } from '../shared/schemas';
 
-const BLOCKED: Hex = '0xblocked';
+const IntervalSchema = z.number();
 
-const RESPONSE_KEYS = [
+const SubscriptionIDSchema = z.number();
+
+const DelegateSubscriptionIDSchema = z.tuple([HexSchema, z.number()]);
+
+const UnionIDSchema = z.union([
+  SubscriptionIDSchema,
+  DelegateSubscriptionIDSchema,
+]);
+
+const DelegateSubscriptionDataSchema = z.tuple([
+  z.instanceof(Subscription),
+  CoordinatorSignatureParamsSchema,
+  z.record(z.any()),
+]);
+
+const MakeDelegateSubscriptionsKeySchema = z
+  .function()
+  .args(HexSchema, z.number())
+  .returns(z.string());
+
+const MakePendingOrAttemptsKeySchema = z
+  .function()
+  .args(UnionIDSchema, IntervalSchema)
+  .returns(z.string());
+
+const ParsePendingOrAttemptsKeySchema = z
+  .function()
+  .args(z.string())
+  .returns(z.tuple([UnionIDSchema, IntervalSchema]));
+
+const ResponseKeysSchema = z.string().array();
+
+type Interval = z.infer<typeof IntervalSchema>;
+
+type SubscriptionID = z.infer<typeof SubscriptionIDSchema>;
+
+type DelegateSubscriptionID = z.infer<typeof DelegateSubscriptionIDSchema>;
+
+type UnionID = z.infer<typeof UnionIDSchema>;
+
+type DelegateSubscriptionData = z.infer<typeof DelegateSubscriptionDataSchema>;
+
+const makeDelegateSubscriptionsKey =
+  MakeDelegateSubscriptionsKeySchema.implement(
+    (subOwner, sigNonce) => `${subOwner}-${sigNonce}`
+  );
+
+const makePendingOrAttemptsKey = MakePendingOrAttemptsKeySchema.implement(
+  (id, interval) => {
+    const _id = Array.isArray(id)
+      ? makeDelegateSubscriptionsKey(id[0], id[1])
+      : id;
+
+    return `${_id}-${interval}`;
+  }
+);
+
+const parsePendingOrAttemptsKey = ParsePendingOrAttemptsKeySchema.implement(
+  (key) => {
+    const items = key.split('-');
+
+    if (items.length === 2) {
+      // Parse key with this format: `${SubscriptionID}-${Interval}`.
+      return [Number(items[0]), Number(items[1])];
+    } else if (items.length === 3) {
+      // Parse key with this format: `${Hex}-${number}-${Interval}`
+      return [[items[0] as Hex, Number(items[1])], Number(items[2])];
+    }
+
+    throw new Error(`Invalid key: ${key}`);
+  }
+);
+
+const BLOCKED: z.infer<typeof HexSchema> = '0xblocked';
+
+const RESPONSE_KEYS: z.infer<typeof ResponseKeysSchema> = [
   'raw_input',
   'processed_input',
   'raw_output',
@@ -45,76 +125,40 @@ const RESPONSE_KEYS = [
   'proof',
 ];
 
-type Interval = number;
-
-type SubscriptionID = number;
-
-type DelegateSubscriptionID = [Hex, number];
-
-type UnionID = SubscriptionID | DelegateSubscriptionID;
-
-type DelegateSubscriptionData = [
-  Subscription,
-  CoordinatorSignatureParams,
-  { [key: string]: any }
-];
-
-const makeDelegateSubscriptionsKey = (
-  subOwner: Hex,
-  sigNonce: number
-): string => `${subOwner}-${sigNonce}`;
-
-const makePendingOrAttemptsKey = (id: UnionID, interval: Interval): string => {
-  const _id = Array.isArray(id)
-    ? makeDelegateSubscriptionsKey(id[0], id[1])
-    : id;
-
-  return `${_id}-${interval}`;
-};
-
-const parsePendingOrAttemptsKey = (key: string): [UnionID, Interval] => {
-  const items = key.split('-');
-
-  if (items.length === 2) {
-    // Parse key with this format: `${SubscriptionID}-${Interval}`.
-    return [Number(items[0]), Number(items[1])];
-  } else if (items.length === 3) {
-    // Parse key with this format: `${Hex}-${number}-${Interval}`
-    return [[items[0] as Hex, Number(items[1])], Number(items[2])];
-  }
-
-  throw new Error(`Invalid key: ${key}`);
-};
-
 export class ChainProcessor extends AsyncTask {
   static fieldSchemas = {
     _rpc: z.instanceof(RPC),
     _coordinator: z.instanceof(Coordinator),
-    _rpc: z.instanceof(RPC),
-    _rpc: z.instanceof(RPC),
+    _wallet: z.instanceof(Wallet),
+    _payment_wallet: z.instanceof(PaymentWallet),
+    _wallet_checker: z.instanceof(WalletChecker),
+    _registry: z.instanceof(Registry),
+    _orchestrator: z.instanceof(Orchestrator),
+    _container_lookup: z.instanceof(ContainerLookup),
+    _subscriptions: z.record(z.instanceof(Subscription)),
+    _delegate_subscriptions: z.record(DelegateSubscriptionDataSchema),
+    _pending: z.record(HexSchema),
+    _attempts: z.record(z.number()),
+    _attempts_lock: z.custom<Mutex>(),
   };
 
-  #rpc: RPC;
-  #coordinator: Coordinator;
-  #wallet: Wallet;
-  #payment_wallet: PaymentWallet;
-  #wallet_checker: WalletChecker;
-  #registry: Registry;
-  #orchestrator: Orchestrator;
-  #container_lookup: ContainerLookup;
-  #subscriptions: {
-    [key: SubscriptionID]: Subscription;
-  };
-  #delegate_subscriptions: {
-    [key: string]: DelegateSubscriptionData;
-  };
-  #pending: {
-    [key: string]: Hex;
-  };
-  #attempts: {
-    [key: string]: number;
-  };
-  #attempts_lock: Mutex;
+  #rpc: z.infer<typeof ChainProcessor.fieldSchemas._rpc>;
+  #coordinator: z.infer<typeof ChainProcessor.fieldSchemas._coordinator>;
+  #wallet: z.infer<typeof ChainProcessor.fieldSchemas._wallet>;
+  #payment_wallet: z.infer<typeof ChainProcessor.fieldSchemas._payment_wallet>;
+  #wallet_checker: z.infer<typeof ChainProcessor.fieldSchemas._wallet_checker>;
+  #registry: z.infer<typeof ChainProcessor.fieldSchemas._registry>;
+  #orchestrator: z.infer<typeof ChainProcessor.fieldSchemas._orchestrator>;
+  #container_lookup: z.infer<
+    typeof ChainProcessor.fieldSchemas._container_lookup
+  >;
+  #subscriptions: z.infer<typeof ChainProcessor.fieldSchemas._subscriptions>;
+  #delegate_subscriptions: z.infer<
+    typeof ChainProcessor.fieldSchemas._delegate_subscriptions
+  >;
+  #pending: z.infer<typeof ChainProcessor.fieldSchemas._pending>;
+  #attempts: z.infer<typeof ChainProcessor.fieldSchemas._attempts>;
+  #attempts_lock: z.infer<typeof ChainProcessor.fieldSchemas._attempts_lock>;
 
   constructor(
     rpc: RPC,
@@ -128,22 +172,30 @@ export class ChainProcessor extends AsyncTask {
   ) {
     super();
 
-    this.#rpc = rpc;
-    this.#coordinator = coordinator;
-    this.#wallet = wallet;
-    this.#payment_wallet = payment_wallet;
-    this.#wallet_checker = wallet_checker;
-    this.#registry = registry;
-    this.#orchestrator = orchestrator;
-    this.#container_lookup = container_lookup;
-    this.#subscriptions = {};
-    this.#delegate_subscriptions = {};
-    this.#pending = {};
-    this.#attempts = {};
+    this.#rpc = ChainProcessor.fieldSchemas._rpc.parse(rpc);
+    this.#coordinator =
+      ChainProcessor.fieldSchemas._coordinator.parse(coordinator);
+    this.#wallet = ChainProcessor.fieldSchemas._wallet.parse(wallet);
+    this.#payment_wallet =
+      ChainProcessor.fieldSchemas._payment_wallet.parse(payment_wallet);
+    this.#wallet_checker =
+      ChainProcessor.fieldSchemas._wallet_checker.parse(wallet_checker);
+    this.#registry = ChainProcessor.fieldSchemas._registry.parse(registry);
+    this.#orchestrator =
+      ChainProcessor.fieldSchemas._orchestrator.parse(orchestrator);
+    this.#container_lookup =
+      ChainProcessor.fieldSchemas._container_lookup.parse(container_lookup);
+    this.#subscriptions = ChainProcessor.fieldSchemas._subscriptions.parse({});
+    this.#delegate_subscriptions =
+      ChainProcessor.fieldSchemas._delegate_subscriptions.parse({});
+    this.#pending = ChainProcessor.fieldSchemas._pending.parse({});
+    this.#attempts = ChainProcessor.fieldSchemas._attempts.parse({});
 
     console.info('Initialized ChainProcessor');
 
-    this.#attempts_lock = new Mutex();
+    this.#attempts_lock = ChainProcessor.fieldSchemas._attempts_lock.parse(
+      new Mutex()
+    );
   }
 
   /**
