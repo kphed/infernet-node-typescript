@@ -1,15 +1,15 @@
 {
-    "compilerOptions": {
-       "target": "es2022",
-       "module": "commonjs",
-       "rootDir": "./src",
-       "resolveJsonModule": true, /* in case you are importing JSON files */
-       "outDir": "./build",
-       "esModuleInterop": true,
-       "forceConsistentCasingInFileNames": true,
-       "strict": true,
-       "noImplicitAny": false,
-       "skipLibCheck": true,
-       "sourceMap": true,
-    }
- }
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "rootDir": "./",
+    "resolveJsonModule": true /* in case you are importing JSON files */,
+    "outDir": "./build",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "sourceMap": true
+  }
+}
