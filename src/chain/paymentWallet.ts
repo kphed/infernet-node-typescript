@@ -1,9 +1,13 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/3806e64bdb3867b462e1760aa7d84abe228f51da/src/chain/payment_wallet.py.
 import { z } from 'zod';
-import { Address, GetContractReturnType, Abi, Client } from 'viem';
+import { Address } from 'viem';
 import { ZERO_ADDRESS, PAYMENT_WALLET_ABI } from '../utils/constants';
 import { RPC } from './rpc';
-import { AddressSchema, ChecksumAddressSchema } from '../shared/schemas';
+import {
+  AddressSchema,
+  ChecksumAddressSchema,
+  ContractInstanceSchema,
+} from '../shared/schemas';
 
 export class PaymentWallet {
   static fieldSchemas = {
@@ -15,9 +19,7 @@ export class PaymentWallet {
     address: {
       returns: ChecksumAddressSchema,
     },
-    _get_contract: z
-      .function()
-      .returns(z.custom<GetContractReturnType<Abi, Client, Address>>()),
+    _get_contract: z.function().returns(ContractInstanceSchema),
     get_owner: z.function().returns(z.promise(ChecksumAddressSchema)),
     approve: z
       .function()

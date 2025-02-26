@@ -4,9 +4,6 @@ import {
   Hex,
   Address,
   encodeAbiParameters,
-  GetContractReturnType,
-  Abi,
-  Client,
   serializeSignature,
   recoverAddress,
   SimulateContractReturnType,
@@ -27,6 +24,7 @@ import {
   AddressSchema,
   ChecksumAddressSchema,
   BlockNumberSchema,
+  ContractInstanceSchema,
 } from '../shared/schemas';
 
 export enum CoordinatorEvent {
@@ -97,7 +95,7 @@ export class Coordinator {
     _rpc: z.instanceof(RPC),
     _lookup: z.instanceof(ContainerLookup),
     _checksum_address: ChecksumAddressSchema,
-    _contract: z.custom<GetContractReturnType<Abi, Client, Address>>(),
+    _contract: ContractInstanceSchema,
   };
 
   static methodSchemas = {

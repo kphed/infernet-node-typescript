@@ -1,5 +1,13 @@
 import { z } from 'zod';
-import { isAddress, Hex, BlockNumber } from 'viem';
+import {
+  isAddress,
+  Hex,
+  BlockNumber,
+  GetContractReturnType,
+  Abi,
+  Client,
+  Address,
+} from 'viem';
 
 export const AddressSchema = z
   .string()
@@ -20,3 +28,6 @@ export const HexSchema = z.custom<Hex>((val) => {
 });
 
 export const BlockNumberSchema = z.custom<BlockNumber>();
+
+export const ContractInstanceSchema =
+  z.custom<GetContractReturnType<Abi, Client, Address>>();
