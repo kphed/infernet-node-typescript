@@ -55,13 +55,13 @@ export class PaymentWallet {
     async (spender, token, amount) => {
       const owner = await this.get_owner();
 
-      if (owner !== this.#rpc.account())
+      if (owner !== this.#rpc.account)
         throw new Error('RPC account must be contract owner');
 
       const hash = await this.#contract.write.approve([spender, token, amount]);
 
       // Waits for the transaction to be included in a block, and returns the receipt.
-      await this.#rpc.publicClient.waitForTransactionReceipt({ hash });
+      await this.#rpc.client.waitForTransactionReceipt({ hash });
 
       const allowance = (await this.#contract.read.allowance([
         spender,

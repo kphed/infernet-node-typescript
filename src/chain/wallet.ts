@@ -180,7 +180,7 @@ export class Wallet {
     await this.#tx_lock.runExclusive(async () => {
       const { request }: any = await fn(txOptions);
 
-      txHash = await this.#rpc.web3.writeContract(request);
+      txHash = await this.#rpc.wallet.writeContract(request);
     });
 
     return txHash;
@@ -228,7 +228,7 @@ export class Wallet {
     await this.#tx_lock.runExclusive(async () => {
       const { request }: any = await fn(txOptions);
 
-      txHash = await this.#rpc.web3.writeContract(request);
+      txHash = await this.#rpc.wallet.writeContract(request);
     });
 
     return txHash;

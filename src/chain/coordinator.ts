@@ -310,7 +310,7 @@ export class Coordinator {
             signature
           );
 
-        return this.#rpc.web3.writeContract({
+        return this.#rpc.wallet.writeContract({
           ...request,
           nonce: tx_params.nonce,
           from: tx_params.sender,

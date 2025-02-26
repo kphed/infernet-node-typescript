@@ -722,7 +722,9 @@ export class ChainProcessor extends AsyncTask {
         if (!txHash || txHash === BLOCKED) return false;
 
         const [found, success] = await this.#rpc.get_tx_success_with_retries(
-          txHash
+          txHash,
+          undefined,
+          undefined
         );
 
         // We have already submitted the transaction and it was successful.
@@ -962,7 +964,7 @@ export class ChainProcessor extends AsyncTask {
         });
 
         await this.#payment_wallet.approve(
-          this.#rpc.account(),
+          this.#rpc.account,
           subscription.payment_token,
           BigInt(subscription.payment_amount)
         );
