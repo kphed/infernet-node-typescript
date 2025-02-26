@@ -1,62 +1,64 @@
 {
-    "log": {
-      "path": "infernet_node.log",
-      "max_file_size": 1000000000,
-      "backup_count": 2
+  "log": {
+    "path": "infernet_node.log",
+    "max_file_size": 1000000000,
+    "backup_count": 2
+  },
+  "manage_containers": true,
+  "server": {
+    "port": 4000,
+    "rate_limit": {
+      "num_requests": 100,
+      "period": 100
+    }
+  },
+  "chain": {
+    "enabled": true,
+    "trail_head_blocks": 5,
+    "rpc_url": "http://127.0.0.1:8545",
+    "registry_address": "0x...",
+    "wallet": {
+      "max_gas_limit": 5000000,
+      "private_key": "0x...",
+      "payment_address": "0x...",
+      "allowed_sim_errors": [
+        "not enough balance"
+      ]
     },
-    "manage_containers": true,
-    "server": {
-      "port": 4000,
-      "rate_limit": {
-        "num_requests": 100,
-        "period": 100
-      }
-    },
-    "chain": {
-      "enabled": true,
-      "trail_head_blocks": 5,
-      "rpc_url": "http://127.0.0.1:8545",
-      "registry_address": "0x...",
-      "wallet": {
-        "max_gas_limit": 5000000,
-        "private_key": "0x...",
-        "payment_address": "0x...",
-        "allowed_sim_errors": ["not enough balance"]
+    "snapshot_sync": {
+      "sleep": 1500,
+      "batch_size": 1800,
+      "starting_sub_id": 0,
+      "sync_period": 500
+    }
+  },
+  "docker": {
+    "username": "username",
+    "password": "password"
+  },
+  "redis": {
+    "host": "redis",
+    "port": 6379
+  },
+  "forward_stats": true,
+  "startup_wait": 1000,
+  "containers": [
+    {
+      "id": "hello-world",
+      "image": "ritualnetwork/hello-world-infernet:latest",
+      "external": true,
+      "port": "3000",
+      "allowed_delegate_addresses": [],
+      "allowed_addresses": [],
+      "allowed_ips": [],
+      "command": "--bind=0.0.0.0:3000 --workers=2",
+      "env": {},
+      "volumes": [],
+      "accepted_payments": {
+        "0x0000000000000000000000000000000000000000": 1000000000000000000,
+        "0x59F2f1fCfE2474fD5F0b9BA1E73ca90b143Eb8d0": 1000000000000000000
       },
-      "snapshot_sync": {
-        "sleep": 1.5,
-        "batch_size": 1800,
-        "starting_sub_id": 0,
-        "sync_period": 0.5
-      }
-    },
-    "docker": {
-      "username": "username",
-      "password": "password"
-    },
-    "redis": {
-      "host": "redis",
-      "port": 6379
-    },
-    "forward_stats": true,
-    "startup_wait": 1.0,
-    "containers": [
-      {
-        "id": "hello-world",
-        "image": "ritualnetwork/hello-world-infernet:latest",
-        "external": true,
-        "port": "3000",
-        "allowed_delegate_addresses": [],
-        "allowed_addresses": [],
-        "allowed_ips": [],
-        "command": "--bind=0.0.0.0:3000 --workers=2",
-        "env": {},
-        "volumes": [],
-        "accepted_payments": {
-          "0x0000000000000000000000000000000000000000": 1000000000000000000,
-          "0x59F2f1fCfE2474fD5F0b9BA1E73ca90b143Eb8d0": 1000000000000000000
-        },
-        "generates_proofs": false
-      }
-    ]
-  }
+      "generates_proofs": false
+    }
+  ]
+}
