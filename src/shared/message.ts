@@ -89,7 +89,7 @@ export class GuardianError {
   static fieldSchemas = {
     message: PrefilterMessageSchema,
     error: z.string(),
-    params: z.object({}).catchall(z.any()),
+    params: z.record(z.any()).default({}),
   };
 
   message: z.infer<typeof GuardianError.fieldSchemas.message>;
