@@ -666,7 +666,7 @@ export class ChainProcessor extends AsyncTask {
           await this.#wallet_checker.has_enough_balance(
             sub.wallet,
             sub.payment_token,
-            sub.payment_amount
+            BigInt(sub.payment_amount)
           );
 
         if (!hasBalance) {
