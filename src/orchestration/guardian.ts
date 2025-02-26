@@ -2,8 +2,8 @@
 import { z } from 'zod';
 import { Address4, Address6 } from 'ip-address';
 import { LRUCache } from 'lru-cache';
-import { ContainerLookup } from '../chain';
-import { WalletChecker } from '../chain';
+import { ContainerLookup } from '../chain/containerLookup';
+import { WalletChecker } from '../chain/walletChecker';
 import {
   DelegatedSubscriptionMessage,
   GuardianError,

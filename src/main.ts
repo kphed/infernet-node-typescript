@@ -7,24 +7,20 @@ import { Config, loadValidatedConfig, ConfigWallet } from './shared/config';
 import { checkNodeIsUpToDate } from './version';
 import { assignPorts } from './utils/container';
 import { add0x } from './utils/helpers';
-import {
-  ContainerManager,
-  DataStore,
-  Orchestrator,
-  Guardian,
-} from './orchestration';
-import {
-  ContainerLookup,
-  ChainProcessor,
-  Wallet,
-  RPC,
-  Registry,
-  WalletChecker,
-  Coordinator,
-  Reader,
-  PaymentWallet,
-  ChainListener,
-} from './chain';
+import { ContainerManager } from './orchestration/docker';
+import { DataStore } from './orchestration/store';
+import { Orchestrator } from './orchestration/orchestrator';
+import { Guardian } from './orchestration/guardian';
+import { ContainerLookup } from './chain/containerLookup';
+import { ChainProcessor } from './chain/processor';
+import { Wallet } from './chain/wallet';
+import { RPC } from './chain/rpc';
+import { Registry } from './chain/registry';
+import { WalletChecker } from './chain/walletChecker';
+import { Coordinator } from './chain/coordinator';
+import { Reader } from './chain/reader';
+import { PaymentWallet } from './chain/paymentWallet';
+import { ChainListener } from './chain/listener';
 import { AsyncTask } from './shared/service';
 
 const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
@@ -52,11 +48,11 @@ class NodeLifecycle {
 
       this.#tasks.push(manager);
 
-      await manager.setup();
+      await manager.setup(false);
 
       const store = new DataStore(config.redis.host, config.redis.port);
 
-      await store.setup_redis_clients();
+      await store.setup();
 
       const orchestrator = new Orchestrator(manager, store);
       const containerLookup = new ContainerLookup(containerConfigs);
@@ -141,7 +137,7 @@ class NodeLifecycle {
         );
       }
     } catch (err) {
-      throw `Config file validation failed: ${err}`;
+      throw err;
     }
   }
 }
@@ -149,5 +145,9 @@ class NodeLifecycle {
 (async () => {
   const nodeLifecycle = new NodeLifecycle();
 
-  await nodeLifecycle.on_startup();
+  try {
+    await nodeLifecycle.on_startup();
+  } catch (err) {
+    console.warn(err);
+  }
 })();

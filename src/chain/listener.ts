@@ -1,7 +1,11 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/7753fef9ca3e1383843919bfbb2cc175f8dcd3b7/src/chain/listener.py.
 import { BlockNumber } from 'viem';
-import { Coordinator, ChainProcessor, Reader, Registry, RPC } from './index';
-import { Guardian } from '../orchestration';
+import { Coordinator } from './coordinator';
+import { ChainProcessor } from './processor';
+import { Reader } from './reader';
+import { Registry } from './registry';
+import { RPC } from './rpc';
+import { Guardian } from '../orchestration/guardian';
 import { ConfigSnapshotSync } from '../shared/config';
 import {
   GuardianError,
