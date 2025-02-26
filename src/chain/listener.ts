@@ -1,6 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/7753fef9ca3e1383843919bfbb2cc175f8dcd3b7/src/chain/listener.py.
 import { z } from 'zod';
-import { BlockNumber } from 'viem';
 import { Coordinator } from './coordinator';
 import { ChainProcessor } from './processor';
 import { Reader } from './reader';

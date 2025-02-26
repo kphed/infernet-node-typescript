@@ -11,7 +11,6 @@ import {
   recoverAddress,
   SimulateContractReturnType,
   WriteContractReturnType,
-  ReadContractReturnType,
   toHex,
 } from 'viem';
 import { RPC } from './rpc';

@@ -1,4 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/2632a0b43b54216fb9616ff0c925edfdf48d7004/src/chain/processor.py.
+import { z } from 'zod';
 import {
   encodeAbiParameters,
   Hex,
@@ -86,6 +87,13 @@ const parsePendingOrAttemptsKey = (key: string): [UnionID, Interval] => {
 };
 
 export class ChainProcessor extends AsyncTask {
+  static fieldSchemas = {
+    _rpc: z.instanceof(RPC),
+    _coordinator: z.instanceof(Coordinator),
+    _rpc: z.instanceof(RPC),
+    _rpc: z.instanceof(RPC),
+  };
+
   #rpc: RPC;
   #coordinator: Coordinator;
   #wallet: Wallet;
