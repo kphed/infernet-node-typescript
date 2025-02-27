@@ -3,7 +3,12 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-import { Config, loadValidatedConfig, ConfigWallet } from './shared/config';
+import { z } from 'zod';
+import {
+  ConfigSchema,
+  loadValidatedConfig,
+  ConfigWallet,
+} from './shared/config';
 import { checkNodeIsUpToDate } from './version';
 import { assignPorts } from './utils/container';
 import { add0x } from './utils/helpers';
@@ -26,114 +31,150 @@ import { AsyncTask } from './shared/service';
 const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
 
 class NodeLifecycle {
+  static fieldSchemas = {
+    config: ConfigSchema,
+    manager: z.instanceof(ContainerManager),
+    store: z.instanceof(DataStore),
+    orchestrator: z.instanceof(Orchestrator),
+    containerLookup: z.instanceof(ContainerLookup),
+    processor: z.instanceof(ChainProcessor),
+    wallet: z.instanceof(Wallet),
+    guardian: z.instanceof(Guardian),
+    rpc: z.instanceof(RPC),
+    registry: z.instanceof(Registry),
+    walletChecker: z.instanceof(WalletChecker),
+    coordinator: z.instanceof(Coordinator),
+    reader: z.instanceof(Reader),
+    paymentWallet: z.instanceof(PaymentWallet),
+    listener: z.instanceof(ChainListener),
+  };
+
   #tasks: AsyncTask[] = [];
+  config!: z.infer<typeof NodeLifecycle.fieldSchemas.config>;
+  manager!: z.infer<typeof NodeLifecycle.fieldSchemas.manager>;
+  store!: z.infer<typeof NodeLifecycle.fieldSchemas.store>;
+  orchestrator!: z.infer<typeof NodeLifecycle.fieldSchemas.orchestrator>;
+  containerLookup!: z.infer<typeof NodeLifecycle.fieldSchemas.containerLookup>;
+  processor!: z.infer<typeof NodeLifecycle.fieldSchemas.processor>;
+  wallet!: z.infer<typeof NodeLifecycle.fieldSchemas.wallet>;
+  guardian!: z.infer<typeof NodeLifecycle.fieldSchemas.guardian>;
+  rpc!: z.infer<typeof NodeLifecycle.fieldSchemas.rpc>;
+  registry!: z.infer<typeof NodeLifecycle.fieldSchemas.registry>;
+  walletChecker!: z.infer<typeof NodeLifecycle.fieldSchemas.walletChecker>;
+  coordinator!: z.infer<typeof NodeLifecycle.fieldSchemas.coordinator>;
+  reader!: z.infer<typeof NodeLifecycle.fieldSchemas.reader>;
+  paymentWallet!: z.infer<typeof NodeLifecycle.fieldSchemas.paymentWallet>;
+  listener!: z.infer<typeof NodeLifecycle.fieldSchemas.listener>;
 
   async on_startup() {
     try {
-      const config: Config = await loadValidatedConfig(configPath);
+      this.config = NodeLifecycle.fieldSchemas.config.parse(
+        await loadValidatedConfig(configPath)
+      );
 
       await checkNodeIsUpToDate();
 
-      const chainEnabled = config.chain.enabled;
+      const chainEnabled = this.config.chain.enabled;
 
       console.debug('Running startup', { chain_enabled: chainEnabled });
 
-      const containerConfigs = assignPorts(config.containers);
-      const manager = new ContainerManager(
+      const containerConfigs = assignPorts(this.config.containers);
+      this.manager = new ContainerManager(
         containerConfigs,
-        config.docker,
-        config.startup_wait,
-        config.manage_containers
+        this.config.docker,
+        this.config.startup_wait,
+        this.config.manage_containers
       );
 
-      this.#tasks.push(manager);
+      this.#tasks.push(this.manager);
 
-      await manager.setup(false);
+      await this.manager.setup(false);
 
-      const store = new DataStore(config.redis.host, config.redis.port);
+      this.store = new DataStore(
+        this.config.redis.host,
+        this.config.redis.port
+      );
 
-      await store.setup();
+      await this.store.setup();
 
-      const orchestrator = new Orchestrator(manager, store);
-      const containerLookup = new ContainerLookup(containerConfigs);
-
-      // Initialize chain-specific tasks.
-      let processor: ChainProcessor;
-      let wallet: Wallet;
-      let guardian: Guardian;
-      let chainId: number;
+      this.orchestrator = new Orchestrator(this.manager, this.store);
+      this.containerLookup = new ContainerLookup(containerConfigs);
 
       if (chainEnabled) {
-        const walletConfig = config.chain.wallet as ConfigWallet;
-        const rpcUrl = config.chain.rpc_url as string;
-        const registryAddress = config.chain.registry_address as string;
+        const walletConfig = this.config.chain.wallet as ConfigWallet;
+        const rpcUrl = this.config.chain.rpc_url as string;
+        const registryAddress = this.config.chain.registry_address as string;
         const privateKey = add0x(walletConfig.private_key as string);
-        const rpc = new RPC(rpcUrl, privateKey);
-        chainId = await rpc.get_chain_id();
-        const registry = new Registry(
-          rpc,
+        this.rpc = new RPC(rpcUrl, privateKey);
+        const chainId = await this.rpc.get_chain_id();
+        this.registry = new Registry(
+          this.rpc,
           RPC.get_checksum_address(registryAddress)
         );
         const paymentAddress = walletConfig.payment_address
           ? RPC.get_checksum_address(walletConfig.payment_address)
           : undefined;
-        const walletChecker = new WalletChecker(
-          rpc,
-          registry,
+        this.walletChecker = new WalletChecker(
+          this.rpc,
+          this.registry,
           containerConfigs,
           paymentAddress
         );
-        guardian = new Guardian(
+        this.guardian = new Guardian(
           containerConfigs,
           chainEnabled,
-          containerLookup,
-          walletChecker
+          this.containerLookup,
+          this.walletChecker
         );
 
-        await registry.populate_addresses();
+        await this.registry.populate_addresses();
 
-        const coordinator = new Coordinator(
-          rpc,
-          registry.coordinator,
-          containerLookup
+        this.coordinator = new Coordinator(
+          this.rpc,
+          this.registry.coordinator,
+          this.containerLookup
         );
-        const reader = new Reader(rpc, registry.reader, containerLookup);
-        wallet = new Wallet(
-          rpc,
-          coordinator,
+        this.reader = new Reader(
+          this.rpc,
+          this.registry.reader,
+          this.containerLookup
+        );
+        this.wallet = new Wallet(
+          this.rpc,
+          this.coordinator,
           privateKey,
           BigInt(walletConfig.max_gas_limit),
           paymentAddress,
           walletConfig.allowed_sim_errors
         );
-        const paymentWallet = new PaymentWallet(paymentAddress, rpc);
-        processor = new ChainProcessor(
-          rpc,
-          coordinator,
-          wallet,
-          paymentWallet,
-          walletChecker,
-          registry,
-          orchestrator,
-          containerLookup
+        this.paymentWallet = new PaymentWallet(paymentAddress, this.rpc);
+        this.processor = new ChainProcessor(
+          this.rpc,
+          this.coordinator,
+          this.wallet,
+          this.paymentWallet,
+          this.walletChecker,
+          this.registry,
+          this.orchestrator,
+          this.containerLookup
         );
-        const listener = new ChainListener(
-          rpc,
-          coordinator,
-          registry,
-          reader,
-          guardian,
-          processor,
-          config.chain.trail_head_blocks,
-          config.chain.snapshot_sync
+        this.listener = new ChainListener(
+          this.rpc,
+          this.coordinator,
+          this.registry,
+          this.reader,
+          this.guardian,
+          this.processor,
+          this.config.chain.trail_head_blocks,
+          this.config.chain.snapshot_sync
         );
 
-        this.#tasks = this.#tasks.concat([processor, listener]);
+        this.#tasks = this.#tasks.concat([this.processor, this.listener]);
       } else {
-        guardian = new Guardian(
+        this.guardian = new Guardian(
           containerConfigs,
           chainEnabled,
-          containerLookup
+          this.containerLookup
         );
       }
     } catch (err) {

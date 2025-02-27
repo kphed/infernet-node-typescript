@@ -3,21 +3,21 @@ import fs from 'fs';
 import { z } from 'zod';
 import { AddressSchema } from './schemas';
 
-const ConfigRateLimitSchema = z
+export const ConfigRateLimitSchema = z
   .object({
     num_requests: z.number().default(60),
     period: z.number().default(60),
   })
   .strict();
 
-const ConfigServerSchema = z
+export const ConfigServerSchema = z
   .object({
     port: z.number().default(4000),
     rate_limit: ConfigRateLimitSchema.default(ConfigRateLimitSchema.parse({})),
   })
   .strict();
 
-const ConfigWalletSchema = z
+export const ConfigWalletSchema = z
   .object({
     max_gas_limit: z.number().default(5000000),
     private_key: z.string().optional(),
@@ -26,7 +26,7 @@ const ConfigWalletSchema = z
   })
   .strict();
 
-const ConfigSnapshotSyncSchema = z
+export const ConfigSnapshotSyncSchema = z
   .object({
     sleep: z.number().default(1),
     batch_size: z.number().default(500),
@@ -35,7 +35,7 @@ const ConfigSnapshotSyncSchema = z
   })
   .strict();
 
-const ConfigChainSchema = z
+export const ConfigChainSchema = z
   .object({
     enabled: z.boolean().default(false),
     rpc_url: z.string().optional(),
@@ -90,14 +90,14 @@ export const InfernetContainerSchema = z
   })
   .strict();
 
-const ConfigRedisSchema = z
+export const ConfigRedisSchema = z
   .object({
     host: z.string().default('redis'),
     port: z.number().default(6379),
   })
   .strict();
 
-const ConfigLogSchema = z
+export const ConfigLogSchema = z
   .object({
     path: z.string().default('infernet_node.log'),
     max_file_size: z.number().default(2 ** 30),
@@ -105,7 +105,7 @@ const ConfigLogSchema = z
   })
   .strict();
 
-const ConfigSchema = z
+export const ConfigSchema = z
   .object({
     containers: InfernetContainerSchema.array().default([]),
     chain: ConfigChainSchema,
