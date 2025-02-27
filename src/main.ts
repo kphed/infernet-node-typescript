@@ -28,10 +28,10 @@ import { PaymentWallet } from './chain/paymentWallet';
 import { ChainListener } from './chain/listener';
 import { AsyncTask } from './shared/service';
 
-const configPath = process.env.INFERNET_CONFIG_PATH ?? 'config.json';
-
-class NodeLifecycle {
+export class NodeLifecycle {
   static fieldSchemas = {
+    _configPath: z.string(),
+    _tasks: z.instanceof(AsyncTask).array(),
     config: ConfigSchema,
     manager: z.instanceof(ContainerManager),
     store: z.instanceof(DataStore),
@@ -49,7 +49,8 @@ class NodeLifecycle {
     listener: z.instanceof(ChainListener),
   };
 
-  #tasks: AsyncTask[] = [];
+  #configPath: z.infer<typeof NodeLifecycle.fieldSchemas._configPath>;
+  #tasks: z.infer<typeof NodeLifecycle.fieldSchemas._tasks> = [];
   config!: z.infer<typeof NodeLifecycle.fieldSchemas.config>;
   manager!: z.infer<typeof NodeLifecycle.fieldSchemas.manager>;
   store!: z.infer<typeof NodeLifecycle.fieldSchemas.store>;
@@ -66,10 +67,16 @@ class NodeLifecycle {
   paymentWallet!: z.infer<typeof NodeLifecycle.fieldSchemas.paymentWallet>;
   listener!: z.infer<typeof NodeLifecycle.fieldSchemas.listener>;
 
+  constructor(configPath = process.env.INFERNET_CONFIG_PATH) {
+    this.#configPath = NodeLifecycle.fieldSchemas._configPath.parse(
+      configPath ?? 'config.json'
+    );
+  }
+
   async on_startup() {
     try {
       this.config = NodeLifecycle.fieldSchemas.config.parse(
-        await loadValidatedConfig(configPath)
+        await loadValidatedConfig(this.#configPath)
       );
 
       await checkNodeIsUpToDate();

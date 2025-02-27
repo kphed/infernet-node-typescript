@@ -131,5 +131,6 @@ dist
 
 # Config
 config.json
+config.test.json
 
 build/

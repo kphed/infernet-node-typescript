@@ -9,6 +9,7 @@ import {
   getContractAddress,
   Hex,
 } from 'viem';
+import fs from 'fs';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   registry,
@@ -18,6 +19,7 @@ import {
   fee,
   walletFactory,
 } from './contracts';
+import config from '../config.json';
 
 export const publicClient = createPublicClient({
   transport: http(process.env.TEST_RPC_URL),
@@ -128,4 +130,19 @@ export const deployContracts = async () => {
       ...walletFactory,
     },
   };
+};
+
+export default async () => {
+  const { registry, coordinator, inbox, reader, fee, walletFactory } =
+    await deployContracts();
+  const testConfig = {
+    ...config,
+  };
+  testConfig.chain.registry_address = registry.address;
+  testConfig.chain.wallet.private_key =
+    process.env.TEST_ACCOUNT_PRIVATE_KEY ?? '';
+
+  fs.writeFileSync('config.test.json', JSON.stringify(testConfig));
+
+  return { registry, coordinator, inbox, reader, fee, walletFactory };
 };
