@@ -10,8 +10,9 @@ import { DataStore } from '../orchestration/store';
 import { ConfigChainSchema, ConfigServerSchema } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import { AddressSchema } from '../shared/schemas';
-import { OffchainJobMessageSchema } from '../shared/message';
+import { MessageType, OffchainJobMessageSchema } from '../shared/message';
 import { GuardianError } from '../shared/message';
+import { Readable } from 'stream';
 
 export class RESTServer extends AsyncTask {
   static fieldSchemas = {
@@ -145,7 +146,7 @@ export class RESTServer extends AsyncTask {
     });
 
     // Filter and preprocess incoming off-chain messages.
-    const filterCreateJob = async (request, response, handler) => {
+    const filterCreateJob = (request, response, handler) => {
       try {
         const { body: data, ip, url, method } = request;
 
@@ -183,7 +184,7 @@ export class RESTServer extends AsyncTask {
           return response.code(403).send({ error, params });
         }
 
-        return await handler(filtered);
+        return handler(filtered);
       } catch (err) {
         console.error(`Error in endpoint preprocessing: ${err}`);
 
@@ -192,6 +193,90 @@ export class RESTServer extends AsyncTask {
           .send({ error: `Internal server error: ${err}` });
       }
     };
+
+    // Creates new off-chain job (direct compute request or subscription).
+    this.#app.post('/api/jobs', async (request, response) => {
+      filterCreateJob(request, response, async (message) => {
+        const { url, method } = request;
+        const returnObj: { id?: string } = {};
+
+        try {
+          if (message.type === MessageType.OffchainJob) {
+            await this.#orchestrator.process_offchain_job(message);
+
+            returnObj.id = `${message.id}`;
+          } else if (message.type === MessageType.DelegatedSubscription) {
+            console.debug('Received delegated subscription request', {
+              endpoint: url,
+              method: method,
+              status: 200,
+              id: `${message.id}`,
+            });
+
+            if (!this.#processor) throw new Error('Chain not enabled');
+
+            await this.#processor.track(message);
+          }
+
+          console.debug('Processed REST response', {
+            endpoint: url,
+            method: method,
+            status: 200,
+            type: message.type,
+            id: `${message.id}`,
+          });
+
+          return response.code(200).send(returnObj);
+        } catch (err) {
+          console.error('Processed REST response', {
+            endpoint: url,
+            method: method,
+            status: 500,
+            err: `${err}`,
+          });
+
+          return response
+            .code(500)
+            .send({ error: `Could not enqueue job: ${err}` });
+        }
+      });
+    });
+
+    // Creates new off-chain streaming job (direct compute request only).
+    this.#app.post('/api/jobs/stream', (request, response) => {
+      filterCreateJob(request, response, (message) => {
+        if (message.type !== MessageType.OffchainJob) {
+          return response.code(405).send({
+            error: 'Streaming only supported for OffchainJob requests.',
+          });
+        }
+
+        console.debug('Processed REST response', {
+          endpoint: request.url,
+          method: request.method,
+          status: 200,
+          type: message.type,
+          id: message.id,
+        });
+
+        // Prepends the message's ID to the streaming job results.
+        async function* generator(streamingJob) {
+          yield await Promise.resolve(`${message.id}\n`);
+
+          for await (const chunk of streamingJob) {
+            yield chunk;
+          }
+        }
+
+        return response
+          .code(200)
+          .send(
+            Readable.from(
+              generator(this.#orchestrator.process_streaming_job(message))
+            )
+          );
+      });
+    });
   });
 
   run_forever = () => {};
