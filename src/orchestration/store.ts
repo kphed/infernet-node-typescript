@@ -16,6 +16,8 @@ const StatusCounterSchema = z
   })
   .strict();
 
+type StatusCounter = z.infer<typeof StatusCounterSchema>;
+
 class KeyFormatter {
   static methodSchemas = {
     format: z
@@ -51,7 +53,7 @@ class DataStoreCounters {
         onchain: StatusCounterSchema,
       })
       .strict(),
-    container_counters: z.record(StatusCounterSchema),
+    container_counters: z.custom<ProxyHandler<StatusCounter>>(),
   };
 
   static methodSchemas = {
