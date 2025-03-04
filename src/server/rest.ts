@@ -1,5 +1,6 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/a3a4627f990796dad29ee8444ebf1aa1a5bc2726/src/server/rest.py.
 import { z } from 'zod';
+import fastify, { FastifyInstance } from 'fastify';
 import { Guardian } from '../orchestration/guardian';
 import { ContainerManager } from '../orchestration/docker';
 import { Orchestrator } from '../orchestration/orchestrator';
@@ -9,7 +10,7 @@ import { ConfigChainSchema, ConfigServerSchema } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import { AddressSchema } from '../shared/schemas';
 
-class RESTServer extends AsyncTask {
+export class RESTServer extends AsyncTask {
   static fieldSchemas = {
     _guardian: z.instanceof(Guardian),
     _manager: z.instanceof(ContainerManager),
@@ -26,6 +27,12 @@ class RESTServer extends AsyncTask {
       .strict(),
     _version: z.string(),
     _wallet_address: AddressSchema,
+    _app: z.custom<FastifyInstance>(),
+    _abort_signal_controller: z.custom<AbortController>(),
+  };
+
+  static methodSchemas = {
+    setup: z.function().returns(z.promise(z.void())),
   };
 
   #guardian: z.infer<typeof RESTServer.fieldSchemas._guardian>;
@@ -38,6 +45,10 @@ class RESTServer extends AsyncTask {
   #rate_limit: z.infer<typeof RESTServer.fieldSchemas._rate_limit>;
   #version: z.infer<typeof RESTServer.fieldSchemas._version>;
   #wallet_address: z.infer<typeof RESTServer.fieldSchemas._wallet_address>;
+  #app!: z.infer<typeof RESTServer.fieldSchemas._app>;
+  #abort_signal_controller!: z.infer<
+    typeof RESTServer.fieldSchemas._abort_signal_controller
+  >;
 
   constructor(
     guardian,
@@ -61,7 +72,7 @@ class RESTServer extends AsyncTask {
     this.#chain = RESTServer.fieldSchemas._chain.parse(config_chain.enabled);
     this.#port = RESTServer.fieldSchemas._port.parse(config_server.port);
     this.#rate_limit = RESTServer.fieldSchemas._rate_limit.parse(
-      config_server._rate_limit
+      config_server.rate_limit
     );
     this.#version = RESTServer.fieldSchemas._version.parse(version);
     this.#wallet_address =
@@ -70,7 +81,31 @@ class RESTServer extends AsyncTask {
     console.debug('Initialized RESTServer', { port: this.#port });
   }
 
-  setup = () => {};
+  // Set up the REST server.
+  setup = RESTServer.methodSchemas.setup.implement(async () => {
+    this.#app = RESTServer.fieldSchemas._app.parse(
+      fastify({
+        logger:
+          process.env.NODE_ENV === 'production'
+            ? false
+            : {
+                level: 'warn',
+              },
+      })
+    );
+    this.#abort_signal_controller = new AbortController();
+
+    await this.#app.register(import('@fastify/rate-limit'), {
+      max: this.#rate_limit.num_requests,
+      timeWindow: this.#rate_limit.period,
+    });
+
+    await this.#app.listen({
+      host: '0.0.0.0',
+      port: this.#port,
+      signal: this.#abort_signal_controller.signal,
+    });
+  });
 
   run_forever = () => {};
 

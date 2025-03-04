@@ -27,12 +27,15 @@
     "vitest": "^3.0.7"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^10.2.2",
     "async-mutex": "^0.5.0",
     "dockerode": "^4.0.4",
     "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
     "ip-address": "^10.0.1",
     "lodash": "^4.17.21",
     "lru-cache": "^11.0.2",
+    "pino-pretty": "^13.0.0",
     "redis": "^4.7.0",
     "viem": "^2.22.21",
     "zod": "^3.24.2"
