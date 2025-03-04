@@ -38,7 +38,7 @@ export class ContainerManager extends AsyncTask {
       )
     ),
     get_port: z.function().args(z.string()).returns(z.number().positive()),
-    get_url: z.function().args(z.string()).returns(z.string().url()),
+    get_url: z.function().args(z.string()).returns(z.string()),
     get_bearer: z.function().args(z.string()).returns(z.string()),
     setup: z
       .function()
