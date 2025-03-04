@@ -1,6 +1,7 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/a3a4627f990796dad29ee8444ebf1aa1a5bc2726/src/server/rest.py.
 import { z } from 'zod';
 import fastify, { FastifyInstance } from 'fastify';
+import { v4 as uuidv4 } from 'uuid';
 import { Guardian } from '../orchestration/guardian';
 import { ContainerManager } from '../orchestration/docker';
 import { Orchestrator } from '../orchestration/orchestrator';
@@ -9,6 +10,8 @@ import { DataStore } from '../orchestration/store';
 import { ConfigChainSchema, ConfigServerSchema } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import { AddressSchema } from '../shared/schemas';
+import { OffchainJobMessageSchema } from '../shared/message';
+import { GuardianError } from '../shared/message';
 
 export class RESTServer extends AsyncTask {
   static fieldSchemas = {
@@ -33,6 +36,7 @@ export class RESTServer extends AsyncTask {
 
   static methodSchemas = {
     setup: z.function().returns(z.promise(z.void())),
+    register_routes: z.function().returns(z.void()),
   };
 
   #guardian: z.infer<typeof RESTServer.fieldSchemas._guardian>;
@@ -45,8 +49,8 @@ export class RESTServer extends AsyncTask {
   #rate_limit: z.infer<typeof RESTServer.fieldSchemas._rate_limit>;
   #version: z.infer<typeof RESTServer.fieldSchemas._version>;
   #wallet_address: z.infer<typeof RESTServer.fieldSchemas._wallet_address>;
-  #app!: z.infer<typeof RESTServer.fieldSchemas._app>;
-  #abort_signal_controller!: z.infer<
+  #app: z.infer<typeof RESTServer.fieldSchemas._app>;
+  #abort_signal_controller: z.infer<
     typeof RESTServer.fieldSchemas._abort_signal_controller
   >;
 
@@ -77,34 +81,117 @@ export class RESTServer extends AsyncTask {
     this.#version = RESTServer.fieldSchemas._version.parse(version);
     this.#wallet_address =
       RESTServer.fieldSchemas._wallet_address.parse(wallet_address);
+    this.#app = RESTServer.fieldSchemas._app.parse(
+      fastify(
+        process.env.NODE_ENV !== 'production'
+          ? {
+              // In production, we'll likely have to define a list of trusted proxy IPs to account for
+              // malicious actors potentially spoofing the X-Forwarded-* header fields.
+              trustProxy: true,
+              logger: {
+                level: 'warn',
+              },
+            }
+          : {}
+      )
+    );
+    this.#abort_signal_controller = new AbortController();
 
     console.debug('Initialized RESTServer', { port: this.#port });
   }
 
   // Set up the REST server.
   setup = RESTServer.methodSchemas.setup.implement(async () => {
-    this.#app = RESTServer.fieldSchemas._app.parse(
-      fastify({
-        logger:
-          process.env.NODE_ENV === 'production'
-            ? false
-            : {
-                level: 'warn',
-              },
-      })
-    );
-    this.#abort_signal_controller = new AbortController();
-
     await this.#app.register(import('@fastify/rate-limit'), {
       max: this.#rate_limit.num_requests,
       timeWindow: this.#rate_limit.period,
     });
+
+    this.register_routes();
 
     await this.#app.listen({
       host: '0.0.0.0',
       port: this.#port,
       signal: this.#abort_signal_controller.signal,
     });
+  });
+
+  register_routes = RESTServer.methodSchemas.register_routes.implement(() => {
+    // Returns node health.
+    this.#app.get('/health', (_, response) => {
+      response.code(200).send({ status: 'healthy' });
+    });
+
+    // Returns running container information and pending job counts.
+    this.#app.get('/info', async (_, response) => {
+      return response.code(200).send({
+        version: this.#version,
+        containers: await this.#manager.running_container_info(),
+        pending: await this.#store.get_pending_counters(),
+        chain: {
+          enabled: this.#chain,
+          address: this.#wallet_address ?? '',
+        },
+      });
+    });
+
+    // Returns resources for a specific model ID (if provided), or full container resources.
+    this.#app.get('/resources*', async (request, response) => {
+      const { model_id } = request.params as { model_id: string };
+
+      return response
+        .code(200)
+        .send(await this.#orchestrator.collect_service_resources(model_id));
+    });
+
+    // Filter and preprocess incoming off-chain messages.
+    const filterCreateJob = async (request, response, handler) => {
+      try {
+        const { body: data, ip, url, method } = request;
+
+        if (!ip) {
+          return response
+            .code(400)
+            .send({ error: 'Could not get client IP address' });
+        }
+
+        const jobId = uuidv4();
+
+        console.debug('Received new off-chain raw message', {
+          msg: data,
+          job_id: jobId,
+        });
+
+        const parsed = OffchainJobMessageSchema.parse({
+          ip,
+          id: jobId,
+          ...data,
+        });
+        const filtered = this.#guardian.process_message(parsed);
+
+        if (filtered instanceof GuardianError) {
+          const { error, params } = filtered;
+
+          console.info('Error submitting job', {
+            endpoint: url,
+            method: method,
+            status: 403,
+            err: error,
+            ...params,
+          });
+
+          return response.code(403).send({ error, params });
+        }
+
+        return await handler(filtered);
+      } catch (err) {
+        console.error(`Error in endpoint preprocessing: ${err}`);
+
+        return response
+          .code(500)
+          .send({ error: `Internal server error: ${err}` });
+      }
+    };
   });
 
   run_forever = () => {};
