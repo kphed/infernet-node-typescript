@@ -28,7 +28,7 @@ class KeyFormatter {
 
   // Concatenates address and message id to obtain unique key.
   static format = KeyFormatter.methodSchemas.format.implement(
-    (ip, id) => `${ip}:${id}`
+    ({ ip, id }) => `${ip}:${id}`
   );
 
   // Get message id from key.
@@ -257,7 +257,10 @@ export class DataStore {
           result: results[results.length - 1],
         })
       );
-      const formattedMessage = KeyFormatter.format(message);
+      const formattedMessage = KeyFormatter.format({
+        id: message.id,
+        ip: message.ip,
+      });
 
       if (status === 'running') {
         // Set job as pending. Expiration time is 15 minutes (900 seconds).
@@ -275,7 +278,12 @@ export class DataStore {
   // Get job data.
   get = DataStore.methodSchemas.get.implement(
     async (messages, intermediate) => {
-      const keys = messages.map((message) => KeyFormatter.format(message));
+      const keys = messages.map((message) =>
+        KeyFormatter.format({
+          id: message.id,
+          ip: message.ip,
+        })
+      );
       const jobs = ((await this.#completed.mGet(keys)) ?? []).concat(
         (await this.#pending.mGet(keys)) ?? []
       );
