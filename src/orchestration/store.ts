@@ -7,7 +7,6 @@ import {
   JobResultSchema,
 } from '../shared/job';
 import { BaseMessageSchema, OffchainMessageSchema } from '../shared/message';
-import { AddressSchema } from '../shared/schemas';
 
 const StatusCounterSchema = z
   .object({
@@ -25,7 +24,7 @@ class KeyFormatter {
       .args(BaseMessageSchema)
       .returns(z.string().includes(':')),
     get_id: z.function().args(z.string()).returns(z.string()),
-    matchstr_address: z.function().args(AddressSchema).returns(z.string()),
+    matchstr_address: z.function().args(z.string().ip()).returns(z.string()),
   };
 
   // Concatenates address and message id to obtain unique key.
@@ -38,7 +37,7 @@ class KeyFormatter {
     (key) => key.split(':')[1]
   );
 
-  // Match string for given address.
+  // Match string for a given IP address.
   static matchstr_address =
     KeyFormatter.methodSchemas.matchstr_address.implement(
       (address) => `${address}:*`
@@ -176,15 +175,15 @@ export class DataStore {
       .returns(z.promise(JobResultSchema.array())),
     _get_pending: z
       .function()
-      .args(AddressSchema)
+      .args(z.string().ip())
       .returns(z.promise(z.string().array())),
     _get_completed: z
       .function()
-      .args(AddressSchema)
+      .args(z.string().ip())
       .returns(z.promise(z.string().array())),
     get_job_ids: z
       .function()
-      .args(AddressSchema, z.boolean().optional())
+      .args(z.string().ip(), z.boolean().optional())
       .returns(z.promise(z.string().array())),
     set_running: z
       .function()
@@ -337,18 +336,18 @@ export class DataStore {
     }
   );
 
-  // Get pending, complete, or all job IDs for a given address.
+  // Get pending, complete, or all job IDs for a given IP address.
   get_job_ids = DataStore.methodSchemas.get_job_ids.implement(
-    async (address, pending) => {
+    async (ip, pending) => {
       let jobIds;
 
       if (pending) {
-        jobIds = await this.#get_pending(address);
+        jobIds = await this.#get_pending(ip);
       } else if (pending === false) {
-        jobIds = await this.#get_completed(address);
+        jobIds = await this.#get_completed(ip);
       } else {
-        jobIds = (await this.#get_pending(address)).concat(
-          await this.#get_completed(address)
+        jobIds = (await this.#get_pending(ip)).concat(
+          await this.#get_completed(ip)
         );
       }
 
