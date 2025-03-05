@@ -294,12 +294,9 @@ export class DataStore {
 
         const jobResult = JSON.parse(val);
 
-        return acc.concat({
-          ...jobResult,
-          intermediate_results: !intermediate
-            ? []
-            : jobResult.intermediate_results,
-        });
+        if (!intermediate) delete jobResult.intermediate_results;
+
+        return acc.concat(jobResult);
       }, []);
     }
   );

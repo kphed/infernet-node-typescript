@@ -61,7 +61,7 @@ export const JobResultSchema = z
   .object({
     id: z.string(),
     status: JobStatusSchema,
-    intermediate_results: ContainerResultSchema.array(),
+    intermediate_results: ContainerResultSchema.array().optional(),
     result: ContainerResultSchema.optional(),
   })
   .strict();
