@@ -118,12 +118,6 @@ export class RESTServer extends AsyncTask {
     });
 
     this.register_routes();
-
-    await this.#app.listen({
-      host: '0.0.0.0',
-      port: this.#port,
-      signal: this.#abort_signal_controller.signal,
-    });
   });
 
   register_routes = RESTServer.methodSchemas.register_routes.implement(() => {
@@ -503,7 +497,31 @@ export class RESTServer extends AsyncTask {
     });
   });
 
-  run_forever = () => {};
+  run_forever = async () => {
+    const hostname = '0.0.0.0';
+
+    console.info('Serving REST webserver', {
+      addr: hostname,
+      port: this.#port,
+    });
+
+    try {
+      await this.#app.listen({
+        host: hostname,
+        port: this.#port,
+        signal: this.#abort_signal_controller.signal,
+      });
+    } catch (err) {
+      // TODO.
+    }
+  };
+
+  // Stops the REST server.
+  stop = async () => {
+    console.info('Stopping REST webserver');
+
+    this.#abort_signal_controller.abort();
+  };
 
   cleanup = () => {};
 }
