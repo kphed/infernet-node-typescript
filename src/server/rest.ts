@@ -16,9 +16,11 @@ import {
   OffchainJobMessageSchema,
   OffchainMessage,
   OffchainMessageSchema,
+  DelegatedSubscriptionMessageSchema,
 } from '../shared/message';
 import { GuardianError } from '../shared/message';
 import { Readable } from 'stream';
+import { SerializedSubscription } from '../shared/subscription';
 
 export class RESTServer extends AsyncTask {
   static fieldSchemas = {
@@ -306,6 +308,30 @@ export class RESTServer extends AsyncTask {
             ip,
             ...data[i],
           };
+
+          if (parsed.type === MessageType.DelegatedSubscription) {
+            parsed.subscription = new SerializedSubscription(
+              parsed.subscription.owner,
+              parsed.subscription.active_at,
+              parsed.subscription.period,
+              parsed.subscription.frequency,
+              parsed.subscription.redundancy,
+              parsed.subscription.containers,
+              parsed.subscription.lazy,
+              parsed.subscription.verifier,
+              parsed.subscription.payment_amount,
+              parsed.subscription.payment_token,
+              parsed.subscription.wallet
+            );
+            parsed.signature = {
+              ...parsed.signature,
+              v: BigInt(parsed.signature.v),
+              // The `r` and `s` signature params must be passed as strings in the request body
+              // to avoid precision loss when casting to bigint.
+              r: BigInt(parsed.signature.r),
+              s: BigInt(parsed.signature.s),
+            };
+          }
 
           const { success: isOffchainMessage } =
             OffchainMessageSchema.safeParse(parsed);
