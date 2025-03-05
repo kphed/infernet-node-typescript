@@ -1,3 +1,8 @@
+// Enables `JSON.stringify` to convert bigint type values into strings.
+BigInt.prototype['toJSON'] = function () {
+  return this.toString();
+};
+
 // Reference: https://github.com/ritual-net/infernet-node/blob/e07f9ca13bdaeb376f02d31b1d2c63e1fd373621/src/main.py.
 import * as dotenv from 'dotenv';
 
@@ -9,7 +14,7 @@ import {
   loadValidatedConfig,
   ConfigWallet,
 } from './shared/config';
-import { checkNodeIsUpToDate } from './version';
+import { checkNodeIsUpToDate, __version__ } from './version';
 import { assignPorts } from './utils/container';
 import { add0x } from './utils/helpers';
 import { ContainerManager } from './orchestration/docker';
@@ -26,12 +31,11 @@ import { Coordinator } from './chain/coordinator';
 import { Reader } from './chain/reader';
 import { PaymentWallet } from './chain/paymentWallet';
 import { ChainListener } from './chain/listener';
-import { AsyncTask } from './shared/service';
+import { RESTServer } from './server/rest';
 
 export class NodeLifecycle {
   static fieldSchemas = {
     _configPath: z.string(),
-    _tasks: z.instanceof(AsyncTask).array(),
     config: ConfigSchema,
     manager: z.instanceof(ContainerManager),
     store: z.instanceof(DataStore),
@@ -47,10 +51,17 @@ export class NodeLifecycle {
     reader: z.instanceof(Reader),
     paymentWallet: z.instanceof(PaymentWallet),
     listener: z.instanceof(ChainListener),
+    api: z.instanceof(RESTServer),
+  };
+
+  static methodSchemas = {
+    _lifecycle_setup: z.function().returns(z.promise(z.void())),
+    _lifecycle_run: z.function().returns(z.promise(z.number())),
+    _shutdown: z.function().returns(z.promise(z.void())),
+    lifecycle_main: z.function().returns(z.void()),
   };
 
   #configPath: z.infer<typeof NodeLifecycle.fieldSchemas._configPath>;
-  #tasks: z.infer<typeof NodeLifecycle.fieldSchemas._tasks> = [];
   config!: z.infer<typeof NodeLifecycle.fieldSchemas.config>;
   manager!: z.infer<typeof NodeLifecycle.fieldSchemas.manager>;
   store!: z.infer<typeof NodeLifecycle.fieldSchemas.store>;
@@ -66,6 +77,7 @@ export class NodeLifecycle {
   reader!: z.infer<typeof NodeLifecycle.fieldSchemas.reader>;
   paymentWallet!: z.infer<typeof NodeLifecycle.fieldSchemas.paymentWallet>;
   listener!: z.infer<typeof NodeLifecycle.fieldSchemas.listener>;
+  api!: z.infer<typeof NodeLifecycle.fieldSchemas.api>;
 
   constructor(configPath = process.env.INFERNET_CONFIG_PATH) {
     this.#configPath = NodeLifecycle.fieldSchemas._configPath.parse(
@@ -92,18 +104,10 @@ export class NodeLifecycle {
         this.config.startup_wait,
         this.config.manage_containers
       );
-
-      this.#tasks.push(this.manager);
-
-      await this.manager.setup(false);
-
       this.store = new DataStore(
         this.config.redis.host,
         this.config.redis.port
       );
-
-      await this.store.setup();
-
       this.orchestrator = new Orchestrator(this.manager, this.store);
       this.containerLookup = new ContainerLookup(containerConfigs);
 
@@ -175,8 +179,6 @@ export class NodeLifecycle {
           this.config.chain.trail_head_blocks,
           this.config.chain.snapshot_sync
         );
-
-        this.#tasks = this.#tasks.concat([this.processor, this.listener]);
       } else {
         this.guardian = new Guardian(
           containerConfigs,
@@ -184,6 +186,18 @@ export class NodeLifecycle {
           this.containerLookup
         );
       }
+
+      this.api = new RESTServer(
+        this.guardian,
+        this.manager,
+        this.orchestrator,
+        this.processor,
+        this.store,
+        this.config.chain,
+        this.config.server,
+        __version__,
+        this.wallet.address
+      );
     } catch (err) {
       throw err;
     }

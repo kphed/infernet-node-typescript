@@ -1,5 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/f130d745ec8ed310e72fd8bba3fef87f67b76575/src/version.py.
-const __version__ = '1.4.0';
+export const __version__ = '1.4.0';
 
 export const checkNodeIsUpToDate = async () => {
   try {
