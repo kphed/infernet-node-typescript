@@ -7,7 +7,6 @@ import { ContainerManager } from '../orchestration/docker';
 import { Orchestrator } from '../orchestration/orchestrator';
 import { ChainProcessor } from '../chain/processor';
 import { DataStore } from '../orchestration/store';
-import { ConfigChainSchema, ConfigServerSchema } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import { AddressSchema } from '../shared/schemas';
 import {
@@ -16,12 +15,13 @@ import {
   OffchainJobMessageSchema,
   OffchainMessage,
   OffchainMessageSchema,
-  DelegatedSubscriptionMessageSchema,
   BaseMessage,
 } from '../shared/message';
 import { GuardianError } from '../shared/message';
 import { Readable } from 'stream';
 import { SerializedSubscription } from '../shared/subscription';
+
+const trustedIPs = ['127.0.0.1'];
 
 export class RESTServer extends AsyncTask {
   static fieldSchemas = {
@@ -432,6 +432,73 @@ export class RESTServer extends AsyncTask {
             intermediate
           )
         );
+      }
+    });
+
+    // Stores job status in data store
+    this.#app.put('/api/status', async (request, response) => {
+      const { ip, body, url, method }: any = request;
+
+      if (!ip)
+        return response
+          .code(400)
+          .send({ error: 'Could not get client IP address' });
+
+      if (!trustedIPs.includes(ip)) {
+        console.warn('Unauthorized attempt to store job status', {
+          remote_addr: ip,
+        });
+
+        return response.code(403).send({ error: 'Unauthorized' });
+      }
+
+      try {
+        console.debug('Received new result', { result: body });
+
+        const parsed: OffchainMessage = OffchainMessageSchema.parse({
+          id: body.id,
+          ip,
+          containers: body.containers,
+          data: {},
+        });
+
+        switch (body.status) {
+          case 'success':
+            await this.#store.set_success(parsed, []);
+            await Promise.all(
+              body.containers.map(async (container) => {
+                await this.#store.track_container_status(container, 'success');
+              })
+            );
+
+            break;
+          case 'failed':
+            await this.#store.set_failed(parsed, []);
+            await Promise.all(
+              body.containers.map(async (container) => {
+                await this.#store.track_container_status(container, 'failed');
+              })
+            );
+
+            break;
+          case 'running':
+            await this.#store.set_running(parsed);
+
+            break;
+          default:
+            return response.code(400).send({ error: 'Status is invalid' });
+        }
+
+        return response.code(200).send({});
+      } catch (err) {
+        console.error('Processed REST response', {
+          endpoint: url,
+          method,
+          status: 500,
+          err,
+        });
+
+        response.code(500).send({ error: 'Could not store job status' });
       }
     });
   });
