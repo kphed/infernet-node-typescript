@@ -47,6 +47,9 @@ export class RESTServer extends AsyncTask {
   static methodSchemas = {
     setup: z.function().returns(z.promise(z.void())),
     register_routes: z.function().returns(z.void()),
+    run_forever: z.function().returns(z.void()),
+    stop: z.function().returns(z.promise(z.void())),
+    cleanup: z.function().returns(z.void()),
   };
 
   #guardian: z.infer<typeof RESTServer.fieldSchemas._guardian>;
@@ -118,6 +121,19 @@ export class RESTServer extends AsyncTask {
     });
 
     this.register_routes();
+
+    const hostname = '0.0.0.0';
+
+    console.info('Serving REST webserver', {
+      addr: hostname,
+      port: this.#port,
+    });
+
+    await this.#app.listen({
+      host: hostname,
+      port: this.#port,
+      signal: this.#abort_signal_controller.signal,
+    });
   });
 
   register_routes = RESTServer.methodSchemas.register_routes.implement(() => {
@@ -497,31 +513,14 @@ export class RESTServer extends AsyncTask {
     });
   });
 
-  run_forever = async () => {
-    const hostname = '0.0.0.0';
-
-    console.info('Serving REST webserver', {
-      addr: hostname,
-      port: this.#port,
-    });
-
-    try {
-      await this.#app.listen({
-        host: hostname,
-        port: this.#port,
-        signal: this.#abort_signal_controller.signal,
-      });
-    } catch (err) {
-      // TODO.
-    }
-  };
-
   // Stops the REST server.
-  stop = async () => {
+  stop = RESTServer.methodSchemas.stop.implement(async () => {
     console.info('Stopping REST webserver');
 
     this.#abort_signal_controller.abort();
-  };
+  });
 
-  cleanup = () => {};
+  run_forever = RESTServer.methodSchemas.run_forever.implement(() => {});
+
+  cleanup = RESTServer.methodSchemas.cleanup.implement(() => {});
 }
