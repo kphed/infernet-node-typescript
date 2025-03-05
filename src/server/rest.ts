@@ -17,6 +17,7 @@ import {
   OffchainMessage,
   OffchainMessageSchema,
   DelegatedSubscriptionMessageSchema,
+  BaseMessage,
 } from '../shared/message';
 import { GuardianError } from '../shared/message';
 import { Readable } from 'stream';
@@ -392,6 +393,45 @@ export class RESTServer extends AsyncTask {
         return response
           .code(500)
           .send({ error: `Could not enqueue job: ${err}` });
+      }
+    });
+
+    // Get tracked jobs.
+    this.#app.get('/api/jobs', async (request, response) => {
+      const { query, ip } = request as {
+        query: {
+          id: string | undefined;
+          pending: string | undefined;
+          intermediate: string | undefined;
+        };
+        ip: string;
+      };
+      const id = query.id ? query.id.split(',') : [];
+      const pending =
+        query.pending === undefined ? undefined : query.pending === 'true';
+      const intermediate = query.intermediate === 'true';
+
+      if (!ip)
+        return response
+          .code(400)
+          .send({ error: 'Could not get client IP address' });
+
+      if (!id.length) {
+        // If `pending` is undefined, will fetch all job IDs.
+        response.code(200).send(await this.#store.get_job_ids(ip, pending));
+      } else {
+        response.code(200).send(
+          await this.#store.get(
+            id.map(
+              (id) =>
+                ({
+                  id,
+                  ip,
+                } as BaseMessage)
+            ),
+            intermediate
+          )
+        );
       }
     });
   });
