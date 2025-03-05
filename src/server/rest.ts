@@ -10,7 +10,13 @@ import { DataStore } from '../orchestration/store';
 import { ConfigChainSchema, ConfigServerSchema } from '../shared/config';
 import { AsyncTask } from '../shared/service';
 import { AddressSchema } from '../shared/schemas';
-import { MessageType, OffchainJobMessageSchema } from '../shared/message';
+import {
+  MessageType,
+  OffchainJobMessage,
+  OffchainJobMessageSchema,
+  OffchainMessage,
+  OffchainMessageSchema,
+} from '../shared/message';
 import { GuardianError } from '../shared/message';
 import { Readable } from 'stream';
 
@@ -150,11 +156,10 @@ export class RESTServer extends AsyncTask {
       try {
         const { body: data, ip, url, method } = request;
 
-        if (!ip) {
+        if (!ip)
           return response
             .code(400)
             .send({ error: 'Could not get client IP address' });
-        }
 
         const jobId = uuidv4();
 
@@ -276,6 +281,92 @@ export class RESTServer extends AsyncTask {
             )
           );
       });
+    });
+
+    // Creates off-chain jobs in batch (direct compute requests / subscriptions).
+    this.#app.post('/api/jobs/batch', async (request, response) => {
+      const { body: data, ip, url, method } = request;
+
+      if (!ip)
+        return response
+          .code(400)
+          .send({ error: 'Could not get client IP address' });
+
+      console.debug('Received new off-chain raw message batch', { msg: data });
+
+      if (!Array.isArray(data))
+        return response.code(400).send({ error: 'Expected a list' });
+
+      try {
+        const parsedAndFiltered: (OffchainMessage | GuardianError)[] = [];
+
+        for (let i = 0; i < data.length; i++) {
+          const parsed = {
+            id: uuidv4(),
+            ip,
+            ...data[i],
+          };
+
+          const { success: isOffchainMessage } =
+            OffchainMessageSchema.safeParse(parsed);
+
+          // Filter out non-offchain messages.
+          if (!isOffchainMessage) continue;
+
+          parsedAndFiltered.push(await this.#guardian.process_message(parsed));
+        }
+
+        const results = parsedAndFiltered.map((msg) => {
+          if (msg instanceof GuardianError)
+            return {
+              error: msg.error,
+              params: msg.params,
+            };
+
+          const { success: isOffchainMessage } =
+            OffchainMessageSchema.safeParse(msg);
+
+          if (isOffchainMessage) {
+            if (msg.type === MessageType.OffchainJob) {
+              this.#orchestrator.process_offchain_job(
+                msg as OffchainJobMessage
+              );
+
+              return {
+                id: msg.id,
+              };
+            } else if (msg.type === MessageType.DelegatedSubscription) {
+              if (!this.#processor) throw new Error('Chain not enabled');
+
+              this.#processor.track(msg);
+
+              return {};
+            } else {
+              return { error: 'Could not parse message' };
+            }
+          }
+        });
+
+        console.debug('Processed REST response', {
+          endpoint: url,
+          method,
+          status: 200,
+          results,
+        });
+
+        return response.code(200).send(results);
+      } catch (err) {
+        console.error('Processed REST response', {
+          endpoint: url,
+          method,
+          status: 500,
+          err: `${err}`,
+        });
+
+        return response
+          .code(500)
+          .send({ error: `Could not enqueue job: ${err}` });
+      }
     });
   });
 
