@@ -213,14 +213,14 @@ export class RESTServer extends AsyncTask {
     };
 
     // Creates new off-chain job (direct compute request or subscription).
-    this.#app.post('/api/jobs', async (request, response) => {
-      filterCreateJob(request, response, async (message) => {
+    this.#app.post('/api/jobs', (request, response) => {
+      filterCreateJob(request, response, (message) => {
         const { url, method } = request;
         const returnObj: { id?: string } = {};
 
         try {
           if (message.type === MessageType.OffchainJob) {
-            await this.#orchestrator.process_offchain_job(message);
+            this.#orchestrator.process_offchain_job(message);
 
             returnObj.id = `${message.id}`;
           } else if (message.type === MessageType.DelegatedSubscription) {
@@ -233,7 +233,7 @@ export class RESTServer extends AsyncTask {
 
             if (!this.#processor) throw new Error('Chain not enabled');
 
-            await this.#processor.track(message);
+            this.#processor.track(message);
           }
 
           console.debug('Processed REST response', {
