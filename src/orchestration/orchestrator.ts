@@ -61,7 +61,7 @@ export class Orchestrator {
     collect_service_resources: z
       .function()
       .args(z.string().optional())
-      .returns(z.record(z.any())),
+      .returns(z.promise(z.record(z.any()))),
   };
 
   #manager: ContainerManager;
