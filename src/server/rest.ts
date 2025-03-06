@@ -311,7 +311,16 @@ export class RESTServer extends AsyncTask {
         return response.code(400).send({ error: 'Expected a list' });
 
       try {
-        const parsedAndFiltered: (OffchainMessage | GuardianError)[] = [];
+        const results: (
+          | {
+              id: string;
+            }
+          | {
+              error: string;
+              params?: any;
+            }
+          | {}
+        )[] = [];
 
         for (let i = 0; i < data.length; i++) {
           const parsed = {
@@ -350,39 +359,33 @@ export class RESTServer extends AsyncTask {
           // Filter out non-offchain messages.
           if (!isOffchainMessage) continue;
 
-          parsedAndFiltered.push(await this.#guardian.process_message(parsed));
-        }
+          const processedResults = await this.#guardian.process_message(parsed);
 
-        const results = parsedAndFiltered.map((msg) => {
-          if (msg instanceof GuardianError)
-            return {
-              error: msg.error,
-              params: msg.params,
-            };
+          if (processedResults instanceof GuardianError) {
+            results.push({
+              error: processedResults.error,
+              params: processedResults.params,
+            });
+          } else if (processedResults.type === MessageType.OffchainJob) {
+            this.#orchestrator.process_offchain_job(
+              processedResults as OffchainJobMessage
+            );
 
-          const { success: isOffchainMessage } =
-            OffchainMessageSchema.safeParse(msg);
+            results.push({
+              id: processedResults.id,
+            });
+          } else if (
+            processedResults.type === MessageType.DelegatedSubscription
+          ) {
+            if (!this.#processor) throw new Error('Chain not enabled');
 
-          if (isOffchainMessage) {
-            if (msg.type === MessageType.OffchainJob) {
-              this.#orchestrator.process_offchain_job(
-                msg as OffchainJobMessage
-              );
+            this.#processor.track(processedResults);
 
-              return {
-                id: msg.id,
-              };
-            } else if (msg.type === MessageType.DelegatedSubscription) {
-              if (!this.#processor) throw new Error('Chain not enabled');
-
-              this.#processor.track(msg);
-
-              return {};
-            } else {
-              return { error: 'Could not parse message' };
-            }
+            results.push({});
+          } else {
+            results.push({ error: 'Could not parse message' });
           }
-        });
+        }
 
         console.debug('Processed REST response', {
           endpoint: url,
