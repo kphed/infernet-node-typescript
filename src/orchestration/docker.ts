@@ -396,7 +396,7 @@ export class ContainerManager extends AsyncTask {
           async ({ id, image, port, env, gpu, volumes, command }) => {
             try {
               const container = this.client.getContainer(id);
-              const containerDetails = await container.inspect();
+              let containerDetails = await container.inspect();
 
               this.#containers =
                 ContainerManager.fieldSchemas._containers.parse({
@@ -404,8 +404,12 @@ export class ContainerManager extends AsyncTask {
                   [id]: container,
                 });
 
-              if (containerDetails.State.Status !== 'running')
+              if (containerDetails.State.Status !== 'running') {
                 await container.start();
+
+                // Update container details if it was recently started (may be missing port data otherwise).
+                containerDetails = await container.inspect();
+              }
 
               const containerHostPort: number = z.coerce
                 .number()
