@@ -124,6 +124,10 @@ export class NodeLifecycle {
         this.config.redis.host,
         this.config.redis.port
       );
+
+      // Connect to redis DBs and run setup tasks.
+      await this.store.setup();
+
       this.orchestrator = new Orchestrator(this.manager, this.store);
       this.containerLookup = new ContainerLookup(containerConfigs);
 
@@ -229,8 +233,6 @@ export class NodeLifecycle {
   #lifecycle_setup = NodeLifecycle.methodSchemas._lifecycle_setup.implement(
     async () => {
       console.debug('Running node lifecycle setup');
-
-      this.store.setup();
 
       await Promise.all(this.#asyncTasks.map((task) => task.setup()));
     }
