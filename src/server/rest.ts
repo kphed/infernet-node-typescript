@@ -156,8 +156,8 @@ export class RESTServer extends AsyncTask {
     });
 
     // Returns resources for a specific model ID (if provided), or full container resources.
-    this.#app.get('/resources*', async (request, response) => {
-      const { model_id } = request.params as { model_id: string };
+    this.#app.get('/resources', async (request, response) => {
+      const { model_id } = request.query as { model_id: string };
 
       return response
         .code(200)
