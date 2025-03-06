@@ -240,41 +240,40 @@ export class ContainerManager extends AsyncTask {
     async () => {
       let runningContainers = await this.running_containers();
 
-      // Continuously checks if any running containers were stopped or started since the previous check.
-      const monitorContainers = async () => {
-        if (this.shutdown) return;
+      while (!this.shutdown) {
+        // Continuously checks if any running containers were stopped or started since the previous check.
+        const monitorContainers = async () => {
+          const currentContainers = await this.running_containers();
 
-        const currentContainers = await this.running_containers();
+          console.log(`Running containers: ${currentContainers}`);
 
-        console.log(`Running containers: ${currentContainers}`);
+          if (currentContainers.length < runningContainers.length) {
+            console.warn(
+              'Container(s) failed / exited / crashed',
+              // Filtered list of containers that are no longer running.
+              runningContainers.filter(
+                (runningContainer) =>
+                  !currentContainers.includes(runningContainer)
+              )
+            );
+          } else if (currentContainers.length > runningContainers.length) {
+            console.log(
+              'Container(s) back up',
+              // Filtered list of containers that have been recently start up.
+              currentContainers.filter(
+                (currentContainer) =>
+                  !runningContainers.includes(currentContainer)
+              )
+            );
+          }
 
-        if (currentContainers.length < runningContainers.length) {
-          console.warn(
-            'Container(s) failed / exited / crashed',
-            // Filtered list of containers that are no longer running.
-            runningContainers.filter(
-              (runningContainer) =>
-                !currentContainers.includes(runningContainer)
-            )
-          );
-        } else if (currentContainers.length > runningContainers.length) {
-          console.log(
-            'Container(s) back up',
-            // Filtered list of containers that have been recently start up.
-            currentContainers.filter(
-              (currentContainer) =>
-                !runningContainers.includes(currentContainer)
-            )
-          );
-        }
+          runningContainers = currentContainers;
 
-        runningContainers = currentContainers;
+          await delay(10_000);
+        };
 
-        // Rerun check in 10 seconds.
-        setTimeout(monitorContainers, 10_000);
-      };
-
-      monitorContainers();
+        await monitorContainers();
+      }
     }
   );
 
