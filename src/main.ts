@@ -32,6 +32,7 @@ import { Reader } from './chain/reader';
 import { PaymentWallet } from './chain/paymentWallet';
 import { ChainListener } from './chain/listener';
 import { RESTServer } from './server/rest';
+import { AsyncTask } from './shared/service';
 
 export class NodeLifecycle {
   static fieldSchemas = {
@@ -51,14 +52,14 @@ export class NodeLifecycle {
     reader: z.instanceof(Reader),
     paymentWallet: z.instanceof(PaymentWallet),
     listener: z.instanceof(ChainListener),
-    api: z.instanceof(RESTServer),
+    _asyncTasks: z.instanceof(AsyncTask).array(),
   };
 
   static methodSchemas = {
     _lifecycle_setup: z.function().returns(z.promise(z.void())),
     _lifecycle_run: z.function().returns(z.promise(z.number())),
+    lifecycle_main: z.function().returns(z.promise(z.void())),
     _shutdown: z.function().returns(z.promise(z.void())),
-    lifecycle_main: z.function().returns(z.void()),
   };
 
   #configPath: z.infer<typeof NodeLifecycle.fieldSchemas._configPath>;
@@ -77,7 +78,7 @@ export class NodeLifecycle {
   reader!: z.infer<typeof NodeLifecycle.fieldSchemas.reader>;
   paymentWallet!: z.infer<typeof NodeLifecycle.fieldSchemas.paymentWallet>;
   listener!: z.infer<typeof NodeLifecycle.fieldSchemas.listener>;
-  api!: z.infer<typeof NodeLifecycle.fieldSchemas.api>;
+  #asyncTasks: z.infer<typeof NodeLifecycle.fieldSchemas._asyncTasks> = [];
 
   constructor(configPath = process.env.INFERNET_CONFIG_PATH) {
     this.#configPath = NodeLifecycle.fieldSchemas._configPath.parse(
@@ -104,6 +105,9 @@ export class NodeLifecycle {
         this.config.startup_wait,
         this.config.manage_containers
       );
+
+      this.#asyncTasks.push(this.manager);
+
       this.store = new DataStore(
         this.config.redis.host,
         this.config.redis.port
@@ -179,6 +183,11 @@ export class NodeLifecycle {
           this.config.chain.trail_head_blocks,
           this.config.chain.snapshot_sync
         );
+
+        this.#asyncTasks = this.#asyncTasks.concat([
+          this.processor,
+          this.listener,
+        ]);
       } else {
         this.guardian = new Guardian(
           containerConfigs,
@@ -187,21 +196,61 @@ export class NodeLifecycle {
         );
       }
 
-      this.api = new RESTServer(
-        this.guardian,
-        this.manager,
-        this.orchestrator,
-        this.processor,
-        this.store,
-        this.config.chain,
-        this.config.server,
-        __version__,
-        this.wallet.address
+      this.#asyncTasks.push(
+        new RESTServer(
+          this.guardian,
+          this.manager,
+          this.orchestrator,
+          this.processor,
+          this.store,
+          this.config.chain,
+          this.config.server,
+          __version__,
+          this.wallet.address
+        )
       );
     } catch (err) {
       throw err;
     }
   }
+
+  // Execute component `setup` methods in a concurrent manner.
+  #lifecycle_setup = NodeLifecycle.methodSchemas._lifecycle_setup.implement(
+    async () => {
+      console.debug('Running node lifecycle setup');
+
+      this.store.setup();
+
+      await Promise.all(this.#asyncTasks.map((task) => task.setup()));
+    }
+  );
+
+  // Execute component `run_forever` methods.
+  #lifecycle_run = NodeLifecycle.methodSchemas._lifecycle_run.implement(
+    async () => {
+      console.info('Running node lifecycle');
+
+      try {
+        // Will resolve when all input promises resolve, or when one rejects.
+        await Promise.all(this.#asyncTasks.map((task) => task.run_forever()));
+
+        return 0;
+      } catch (err) {
+        console.error(err);
+        console.log(`Node exited: ${err}`);
+
+        await this.#shutdown();
+
+        return 1;
+      }
+    }
+  );
+
+  lifecycle_main = NodeLifecycle.methodSchemas.lifecycle_main.implement(
+    async () => {}
+  );
+
+  #shutdown = NodeLifecycle.methodSchemas._shutdown.implement(async () => {});
 }
 
 (async () => {
@@ -209,6 +258,7 @@ export class NodeLifecycle {
 
   try {
     await nodeLifecycle.on_startup();
+    await nodeLifecycle.lifecycle_main();
   } catch (err) {
     console.warn(err);
   }
