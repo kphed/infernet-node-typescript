@@ -39,7 +39,7 @@ export class RESTServer extends AsyncTask {
       })
       .strict(),
     _version: z.string(),
-    _wallet_address: AddressSchema,
+    _wallet_address: AddressSchema.optional(),
     _app: z.custom<FastifyInstance>(),
     _abort_signal_controller: z.custom<AbortController>(),
   };

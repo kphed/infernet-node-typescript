@@ -133,7 +133,6 @@ export class NodeLifecycle {
         const registryAddress = this.config.chain.registry_address as string;
         const privateKey = add0x(walletConfig.private_key as string);
         this.rpc = new RPC(rpcUrl, privateKey);
-        const chainId = await this.rpc.get_chain_id();
         this.registry = new Registry(
           this.rpc,
           RPC.get_checksum_address(registryAddress)
@@ -218,7 +217,7 @@ export class NodeLifecycle {
           this.config.chain,
           this.config.server,
           __version__,
-          this.wallet.address
+          this.wallet?.address
         )
       );
     } catch (err) {
