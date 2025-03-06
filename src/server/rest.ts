@@ -115,7 +115,7 @@ export class RESTServer extends AsyncTask {
 
   // Set up the REST server.
   setup = RESTServer.methodSchemas.setup.implement(async () => {
-    await this.#app.register(import('@fastify/rate-limit'), {
+    this.#app.register(import('@fastify/rate-limit'), {
       max: this.#rate_limit.num_requests,
       timeWindow: this.#rate_limit.period,
     });
@@ -138,13 +138,13 @@ export class RESTServer extends AsyncTask {
 
   register_routes = RESTServer.methodSchemas.register_routes.implement(() => {
     // Returns node health.
-    this.#app.get('/health', (_, response) => {
-      response.code(200).send({ status: 'healthy' });
-    });
+    this.#app.get('/health', (_, response) =>
+      response.code(200).send({ status: 'healthy' })
+    );
 
     // Returns running container information and pending job counts.
-    this.#app.get('/info', async (_, response) => {
-      return response.code(200).send({
+    this.#app.get('/info', async (_, response) =>
+      response.code(200).send({
         version: this.#version,
         containers: await this.#manager.running_container_info(),
         pending: await this.#store.get_pending_counters(),
@@ -152,8 +152,8 @@ export class RESTServer extends AsyncTask {
           enabled: this.#chain,
           address: this.#wallet_address ?? '',
         },
-      });
-    });
+      })
+    );
 
     // Returns resources for a specific model ID (if provided), or full container resources.
     this.#app.get('/resources', async (request, response) => {
@@ -213,7 +213,7 @@ export class RESTServer extends AsyncTask {
     };
 
     // Creates new off-chain job (direct compute request or subscription).
-    this.#app.post('/api/jobs', (request, response) => {
+    this.#app.post('/api/jobs', (request, response) =>
       filterCreateJob(request, response, (message) => {
         const { url, method } = request;
         const returnObj: { id?: string } = {};
@@ -257,17 +257,16 @@ export class RESTServer extends AsyncTask {
             .code(500)
             .send({ error: `Could not enqueue job: ${err}` });
         }
-      });
-    });
+      })
+    );
 
     // Creates new off-chain streaming job (direct compute request only).
-    this.#app.post('/api/jobs/stream', (request, response) => {
+    this.#app.post('/api/jobs/stream', (request, response) =>
       filterCreateJob(request, response, (message) => {
-        if (message.type !== MessageType.OffchainJob) {
+        if (message.type !== MessageType.OffchainJob)
           return response.code(405).send({
             error: 'Streaming only supported for OffchainJob requests.',
           });
-        }
 
         console.debug('Processed REST response', {
           endpoint: request.url,
@@ -293,11 +292,11 @@ export class RESTServer extends AsyncTask {
               generator(this.#orchestrator.process_streaming_job(message))
             )
           );
-      });
-    });
+      })
+    );
 
     // Creates off-chain jobs in batch (direct compute requests / subscriptions).
-    this.#app.post('/api/jobs/batch', async (request, response) => {
+    this.#app.post('/api/jobs/batch', (request, response) => {
       const { body: data, ip, url, method } = request;
 
       if (!ip)
@@ -359,7 +358,7 @@ export class RESTServer extends AsyncTask {
           // Filter out non-offchain messages.
           if (!isOffchainMessage) continue;
 
-          const processedResults = await this.#guardian.process_message(parsed);
+          const processedResults = this.#guardian.process_message(parsed);
 
           if (processedResults instanceof GuardianError) {
             results.push({
@@ -431,9 +430,11 @@ export class RESTServer extends AsyncTask {
 
       if (!id.length) {
         // If `pending` is undefined, will fetch all job IDs.
-        response.code(200).send(await this.#store.get_job_ids(ip, pending));
+        return response
+          .code(200)
+          .send(await this.#store.get_job_ids(ip, pending));
       } else {
-        response.code(200).send(
+        return response.code(200).send(
           await this.#store.get(
             id.map(
               (id) =>
@@ -478,19 +479,17 @@ export class RESTServer extends AsyncTask {
         switch (body.status) {
           case 'success':
             await this.#store.set_success(parsed, []);
-            await Promise.all(
-              body.containers.map(async (container) => {
-                await this.#store.track_container_status(container, 'success');
-              })
+
+            body.containers.forEach((container) =>
+              this.#store.track_container_status(container, 'success')
             );
 
             break;
           case 'failed':
             await this.#store.set_failed(parsed, []);
-            await Promise.all(
-              body.containers.map(async (container) => {
-                await this.#store.track_container_status(container, 'failed');
-              })
+
+            body.containers.forEach((container) =>
+              this.#store.track_container_status(container, 'failed')
             );
 
             break;
@@ -511,7 +510,7 @@ export class RESTServer extends AsyncTask {
           err,
         });
 
-        response.code(500).send({ error: 'Could not store job status' });
+        return response.code(500).send({ error: 'Could not store job status' });
       }
     });
   });
