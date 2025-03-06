@@ -88,9 +88,21 @@ export class NodeLifecycle {
 
   async on_startup() {
     try {
-      this.config = NodeLifecycle.fieldSchemas.config.parse(
-        await loadValidatedConfig(this.#configPath)
-      );
+      const { success: configSuccessfullyValidated, data: validatedConfig } =
+        NodeLifecycle.fieldSchemas.config.safeParse(
+          await loadValidatedConfig(this.#configPath)
+        );
+
+      // Handle failed config validation.
+      if (!configSuccessfullyValidated) {
+        console.error('Config file validation failed', {
+          config_path: this.#configPath,
+        });
+
+        process.exit(1);
+      }
+
+      this.config = validatedConfig;
 
       await checkNodeIsUpToDate();
 
