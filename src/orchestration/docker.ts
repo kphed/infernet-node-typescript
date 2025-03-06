@@ -42,7 +42,8 @@ export class ContainerManager extends AsyncTask {
     get_bearer: z.function().args(z.string()).returns(z.string()),
     setup: z
       .function()
-      .args(z.boolean().default(false))
+      // We are not validating args for `setup` due to it being called w/o args in the node
+      // `#lifecycle_setup` method (a zod validation error would be thrown otherwise).
       .returns(z.promise(z.void())),
     run_forever: z.function().returns(z.promise(z.void())),
     stop: z.function().returns(z.promise(z.void())),
