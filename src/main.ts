@@ -58,8 +58,8 @@ export class NodeLifecycle {
   static methodSchemas = {
     _lifecycle_setup: z.function().returns(z.promise(z.void())),
     _lifecycle_run: z.function().returns(z.promise(z.number())),
-    lifecycle_main: z.function().returns(z.promise(z.void())),
     _shutdown: z.function().returns(z.promise(z.void())),
+    lifecycle_main: z.function().returns(z.promise(z.void())),
   };
 
   #configPath: z.infer<typeof NodeLifecycle.fieldSchemas._configPath>;
@@ -246,11 +246,30 @@ export class NodeLifecycle {
     }
   );
 
-  lifecycle_main = NodeLifecycle.methodSchemas.lifecycle_main.implement(
-    async () => {}
-  );
+  // Gracefully shutdown node. Stops all tasks and cleans up.
+  #shutdown = NodeLifecycle.methodSchemas._shutdown.implement(async () => {
+    console.info('Shutting down node');
 
-  #shutdown = NodeLifecycle.methodSchemas._shutdown.implement(async () => {});
+    // Run stop and clean up tasks for all AsyncTask-based components.
+    await Promise.all(this.#asyncTasks.map((task) => task.stop()));
+    await Promise.all(this.#asyncTasks.map((task) => task.cleanup()));
+
+    console.debug('Shutdown complete.');
+  });
+
+  lifecycle_main = NodeLifecycle.methodSchemas.lifecycle_main.implement(
+    async () => {
+      await this.#lifecycle_setup();
+
+      // Register signal handlers for graceful shutdown.
+      process.on('SIGTERM', async () => await this.#shutdown());
+      process.on('SIGINT', async () => await this.#shutdown());
+
+      const exitCode = await this.#lifecycle_run();
+
+      process.exit(exitCode);
+    }
+  );
 }
 
 (async () => {
