@@ -116,6 +116,7 @@ export class RPC {
     this.#private_key = RPC.fieldSchemas._private_key.parse(private_key);
     this.#wallet = RPC.fieldSchemas._wallet.parse(
       createWalletClient({
+        cacheTime: 0,
         account: privateKeyToAccount(private_key),
         transport: http(rpc_url),
       })
@@ -123,6 +124,8 @@ export class RPC {
     this.#block_cache = new LRUCache({ max: 100 });
     this.client = RPC.fieldSchemas.client.parse(
       createPublicClient({
+        // Defer to the config when determining frequency of syncing or fetching chain data.
+        cacheTime: 0,
         transport: http(rpc_url),
       })
     );
