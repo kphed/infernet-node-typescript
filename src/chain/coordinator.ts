@@ -67,6 +67,22 @@ export const BigIntToBytes32Schema = z
   .args(z.bigint())
   .returns(HexSchema);
 
+export const GetSubscriptionReturnDataSchema = z
+  .object({
+    owner: AddressSchema,
+    activeAt: z.number(),
+    period: z.number(),
+    frequency: z.number(),
+    redundancy: z.number(),
+    containerId: HexSchema,
+    lazy: z.boolean(),
+    verifier: AddressSchema,
+    paymentAmount: z.bigint(),
+    paymentToken: AddressSchema,
+    wallet: AddressSchema,
+  })
+  .strict();
+
 export type CoordinatorDeliveryParams = z.infer<
   typeof CoordinatorDeliveryParamsSchema
 >;
@@ -87,6 +103,10 @@ const coordinatorEventHashes = Object.keys(CoordinatorEvent).reduce(
   }),
   {}
 );
+
+export type GetSubscriptionReturnData = z.infer<
+  typeof GetSubscriptionReturnDataSchema
+>;
 
 const bigIntToBytes32: BigIntToBytes32 = (val) => toHex(val, { size: 32 });
 
@@ -335,19 +355,19 @@ export class Coordinator {
   get_subscription_by_id =
     Coordinator.methodSchemas.get_subscription_by_id.implement(
       async (subscription_id, block_number) => {
-        const [
+        const {
           owner,
-          active_at,
+          activeAt,
           period,
           frequency,
           redundancy,
-          containers_hash,
+          containerId,
           lazy,
           verifier,
-          payment_amount,
-          payment_token,
+          paymentAmount,
+          paymentToken,
           wallet,
-        ] = (await this.#contract.read.getSubscription(
+        } = (await this.#contract.read.getSubscription(
           [subscription_id],
           // If `block_number === undefined` will use the latest block number by default.
           block_number !== 0n
@@ -355,33 +375,21 @@ export class Coordinator {
                 blockNumber: block_number,
               }
             : {}
-        )) as [
-          Address,
-          number,
-          number,
-          number,
-          number,
-          Hex,
-          boolean,
-          Address,
-          number,
-          Address,
-          Address
-        ];
+        )) as GetSubscriptionReturnData;
 
         return new Subscription(
           subscription_id,
           this.#lookup,
           owner,
-          active_at,
+          activeAt,
           period,
           frequency,
           redundancy,
-          containers_hash,
+          containerId,
           lazy,
           verifier,
-          payment_amount,
-          payment_token,
+          Number(paymentAmount),
+          paymentToken,
           wallet
         );
       }
