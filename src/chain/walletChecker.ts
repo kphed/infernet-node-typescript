@@ -1,6 +1,5 @@
 // Reference: https://github.com/ritual-net/infernet-node/blob/0e2d8cff1a42772a4ea4bea9cd33e99f60d46a0f/src/chain/wallet_checker.py.
 import { z } from 'zod';
-import { Address } from 'viem';
 import { Registry } from './registry';
 import { RPC } from './rpc';
 import { Subscription } from '../shared/subscription';
