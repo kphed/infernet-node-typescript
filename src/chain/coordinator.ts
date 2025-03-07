@@ -243,11 +243,10 @@ export class Coordinator {
     Coordinator.methodSchemas.get_existing_delegate_subscription.implement(
       async (subscription, signature, block_number) => {
         const checksumAddress = RPC.get_checksum_address(subscription.owner);
-        const key = encodeAbiParameters(
-          [{ type: 'address' }, { type: 'uint32' }],
+        const hash = RPC.get_keccak(
+          ['address', 'uint32'],
           [checksumAddress, signature.nonce]
         );
-        const hash = RPC.get_keccak(['bytes'], [key]);
         const subscriptionId = await this.#contract.read.delegateCreatedIds(
           [hash],
           block_number
@@ -425,21 +424,10 @@ export class Coordinator {
   get_node_has_delivered_response =
     Coordinator.methodSchemas.get_node_has_delivered_response.implement(
       async (subscription_id, interval, node_address, block_number) => {
-        const nodeRespondedKey = encodeAbiParameters(
-          [
-            {
-              type: 'uint32',
-            },
-            {
-              type: 'uint32',
-            },
-            {
-              type: 'address',
-            },
-          ],
+        const hash = RPC.get_keccak(
+          ['uint32', 'uint32', 'address'],
           [subscription_id, interval, node_address]
         );
-        const hash = RPC.get_keccak(['bytes'], [nodeRespondedKey]);
 
         return this.#contract.read.nodeResponded([hash], {
           blockNumber: block_number,
@@ -451,11 +439,10 @@ export class Coordinator {
   get_subscription_response_count =
     Coordinator.methodSchemas.get_subscription_response_count.implement(
       async (subscription_id, interval, block_number) => {
-        const redundancyCountKey = encodeAbiParameters(
-          [{ type: 'uint32' }, { type: 'uint32' }],
+        const hash = RPC.get_keccak(
+          ['uint32', 'uint32'],
           [subscription_id, interval]
         );
-        const hash = RPC.get_keccak(['bytes'], [redundancyCountKey]);
 
         return this.#contract.read.redundancyCount([hash], {
           ...(block_number !== 0n ? { blockNumber: block_number } : {}),
