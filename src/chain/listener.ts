@@ -371,7 +371,9 @@ export class ChainListener extends AsyncTask {
       } else {
         // Else, if already synced to head, sleep.
         console.debug(
-          `No new blocks, sleeping for: ${this.#syncing_period} seconds`,
+          `No new blocks, sleeping for: ${
+            this.#syncing_period / 1_000
+          } seconds`,
           {
             head: headBlock,
             synced: this.#last_block,
