@@ -1137,13 +1137,9 @@ export class ChainProcessor extends AsyncTask {
     while (!this.shutdown) {
       this.#prune_failed_txs();
 
-      const subscriptionsCopy: {
-        [key: string]: Subscription;
-      } = cloneDeep(this.#subscriptions);
-
-      for (const subId in subscriptionsCopy) {
+      for (const subId in this.#subscriptions) {
         const subscriptionId = parseInt(subId);
-        const subscription: Subscription = subscriptionsCopy[subId];
+        const subscription: Subscription = this.#subscriptions[subId];
 
         // Checks if sub owner has a valid wallet & enough funds.
         if (await this.#stop_tracking_if_sub_owner_cant_pay(subscriptionId))
