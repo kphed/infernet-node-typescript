@@ -4,6 +4,10 @@
 
 **This project is independently developed and is not affiliated with, sponsored by, or endorsed by Ritual Labs.** Ritual Labs does not provide support or assume responsibility for this repository or any issues that may arise from using this port. Users are encouraged to consult the official Ritual Infernet Node repository for authoritative information, official updates, and formal support.
 
+## License
+
+This project is based on the original [Ritual Infernet Node repository](https://github.com/ritual-net/infernet-node), developed by Origin Research Ltd. and licensed under the Clear BSD License. Please refer to the [LICENSE](./LICENSE) file for complete licensing information.
+
 ## Introduction
 
 This repository contains an ongoing JavaScript/TypeScript port of the original Python-based Ritual Infernet Node (v1.4.0), which can be found [here](https://github.com/ritual-net/infernet-node).
@@ -74,6 +78,7 @@ Commit SHA: [ee2ab486382eaf6786871d2df0f012ea5f303683](https://github.com/ritual
 - [x] .gitignore
 - [ ] Dockerfile
 - [ ] Dockerfile-gpu
+- [x] LICENSE
 - [ ] README.md
 - [x] config.sample.json
 - [ ] docker-hub.exp
