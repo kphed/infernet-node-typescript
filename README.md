@@ -106,7 +106,9 @@ Launch a local testnet using Foundry's [Anvil](https://book.getfoundry.sh/anvil/
 
 `anvil --fork-url https://eth.llamarpc.com --block-time 1`
 
-This command starts a fork of the Ethereum mainnet, mining a new block every second. It is highly recommended to replace the RPC URL above with your own preferred endpoint to avoid potential rate-limiting and other related issues. Alternatively, you can start a fresh testnet without forking and manually deploy the Infernet SDK smart contracts.
+This command starts a fork of the Ethereum mainnet, mining a new block every second. It is strongly recommended to replace the RPC URL above with your own preferred endpoint to avoid potential rate-limiting and other related issues. Alternatively, you can start a fresh testnet without forking and manually deploy the Infernet SDK smart contracts.
+
+> Tip: If you do not already have a funded Ethereum account, you can use one of the Anvil-provided accounts with pre-funded balances. The private keys for these accounts are displayed when the Anvil testnet starts.
 
 Forking the Ethereum mainnet (or any other Ritual-supported chain) provides us with access to the [Infernet SDK smart contracts](https://docs.ritual.net/infernet/sdk/introduction#deployed-contracts) previously deployed by the Ritual team.
 
