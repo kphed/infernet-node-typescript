@@ -86,7 +86,7 @@ Commit SHA: [ee2ab486382eaf6786871d2df0f012ea5f303683](https://github.com/ritual
 
 ## Getting Started
 
-Follow the instructions below to run the Infernet Node with a development-ready configuration: Ritual hello-world Docker container, and a Foundry Anvil-based testnet with Infernet SDK contracts deployed.
+Follow the instructions below to run the Infernet Node with a development-ready configuration.
 
 ### Prerequisites
 
@@ -97,3 +97,21 @@ Ensure you have the following dependencies installed, ideally with the exact ver
 - [Docker](http://docker.com/) (version 28.0.1)
 - [Redis](https://redis.io/) (version 7.2.5)
 - [Foundry](https://getfoundry.sh/) (version 1.0.0-stable)
+
+Confirm that each of the above dependencies is properly configured before proceeding (e.g., running `docker --version` to verify that Docker is correctly set up with adequate permissions).
+
+### Set up local testnet
+
+Launch a local testnet using Foundry's [Anvil](https://book.getfoundry.sh/anvil/):
+
+`anvil --fork-url https://eth.llamarpc.com --block-time 1`
+
+This command starts a fork of the Ethereum mainnet, mining a new block every second. It is highly recommended to replace the RPC URL above with your own preferred endpoint to avoid potential rate-limiting and other related issues. Alternatively, you can start a fresh testnet without forking and manually deploy the Infernet SDK smart contracts.
+
+Forking the Ethereum mainnet (or any other Ritual-supported chain) provides us with access to the [Infernet SDK smart contracts](https://docs.ritual.net/infernet/sdk/introduction#deployed-contracts) previously deployed by the Ritual team.
+
+For reference, the Ethereum mainnet Registry smart contract address is:
+
+`0xa0113fC5967707bF44d33CF9611D66726c7449B5`
+
+This address will be required in the next step.
