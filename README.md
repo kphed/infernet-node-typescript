@@ -12,7 +12,7 @@ This project is based on the original [Ritual Infernet Node repository](https://
 
 This repository contains an ongoing JavaScript/TypeScript port of the original Python-based Ritual Infernet Node (v1.4.0), which can be found [here](https://github.com/ritual-net/infernet-node).
 
-The core functionality from the original Python implementation has been adapted to JavaScript/TypeScript. However, due to inherent differences between the programming languages and available libraries, this port is not intended to be a "one-to-one" translation.
+The core functionality from the original Python implementation has been adapted to JavaScript/TypeScript. However, due to inherent differences between the programming languages and available libraries, it should not be expected for this port to be "one-to-one" with the original codebase.
 
 If you encounter significant discrepancies between this implementation and the original Python version that impact functionality, please open a GitHub issue. When doing so, clearly describe the discrepancy and, if possible, propose a solution or recommended adjustment.
 
@@ -100,7 +100,7 @@ Ensure you have the following dependencies installed, ideally with the exact ver
 
 Confirm that each of the above dependencies is properly configured before proceeding (e.g., running `docker --version` to verify that Docker is correctly set up with adequate permissions).
 
-### Set up local testnet
+### Set Up Local Testnet
 
 Launch a local testnet using Foundry's [Anvil](https://book.getfoundry.sh/anvil/):
 
@@ -117,3 +117,41 @@ For reference, the Ethereum mainnet Registry smart contract address is:
 `0xa0113fC5967707bF44d33CF9611D66726c7449B5`
 
 This address will be required in the next step.
+
+### Set Up and Start Infernet Node
+
+Clone this GitHub repo, and navigate to it:
+
+`git clone https://github.com/kphed/infernet-node-typescript && cd infernet-node-typescript`
+
+Install the project packages:
+
+`npm install`
+
+Copy the example environment and configuration files:
+
+`cp .env.example .env && cp config.sample.json config.json`
+
+For the purposes of this setup guide, no changes to the .env file are needed.
+
+For the config.json file, modify these properties:
+- `chain.registry_address` (Line 19): Set to the Registry smart contract address listed above if your testnet is a fork of Ethereum mainnet.
+- `chain.wallet.private_key` (Line 22): Set to the private key of the Ethereum account you are using (e.g., a funded Anvil-provided account).
+- `chain.wallet.payment_address` (Line 23): Follow the instructions below to deploy a Wallet smart contract and set this value accordingly.
+
+To deploy a Wallet smart contract, use Foundry's [cast](https://book.getfoundry.sh/cast/) to call the WalletFactory's createWallet method. Fill in the `REGISTRY_ADDRESS`, `ACCOUNT_ADDRESS`, and `PRIVATE_KEY` variables, then run the following commands:
+
+```
+REGISTRY_ADDRESS=0x
+WALLET_FACTORY_ADDRESS=$(cast call $REGISTRY_ADDRESS --rpc-url localhost:8545 "WALLET_FACTORY()(address)")
+ACCOUNT_ADDRESS=0x
+PRIVATE_KEY=0x
+
+cast send $WALLET_FACTORY_ADDRESS --private-key $PRIVATE_KEY "createWallet(address)(address)" $ACCOUNT_ADDRESS --json | jq -r '.logs[0].address'
+```
+
+Set the output (the newly-deployed Wallet address) as the value for `chain.wallet.payment_address`.
+
+Finally, start the node (uses nodemon, which automatically restarts on file changes):
+
+`npm run dev`

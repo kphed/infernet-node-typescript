@@ -21,9 +21,7 @@
       "max_gas_limit": 5000000,
       "private_key": "0x...",
       "payment_address": "0x...",
-      "allowed_sim_errors": [
-        "not enough balance"
-      ]
+      "allowed_sim_errors": ["not enough balance"]
     },
     "snapshot_sync": {
       "sleep": 1500,
