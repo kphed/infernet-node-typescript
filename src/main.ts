@@ -86,147 +86,141 @@ export class NodeLifecycle {
     );
   }
 
+  // Run node startup tasks.
   async on_startup() {
-    try {
-      const { success: configSuccessfullyValidated, data: validatedConfig } =
-        NodeLifecycle.fieldSchemas.config.safeParse(
-          await loadValidatedConfig(this.#configPath)
-        );
-
-      // Handle failed config validation.
-      if (!configSuccessfullyValidated) {
-        console.error('Config file validation failed', {
-          config_path: this.#configPath,
-        });
-
-        process.exit(1);
-      }
-
-      this.config = validatedConfig;
-
-      await checkNodeIsUpToDate();
-
-      const chainEnabled = this.config.chain.enabled;
-
-      console.debug('Running startup', { chain_enabled: chainEnabled });
-
-      const containerConfigs = assignPorts(this.config.containers);
-      this.manager = new ContainerManager(
-        containerConfigs,
-        this.config.docker,
-        this.config.startup_wait,
-        this.config.manage_containers
+    const { success: configSuccessfullyValidated, data: validatedConfig } =
+      NodeLifecycle.fieldSchemas.config.safeParse(
+        await loadValidatedConfig(this.#configPath)
       );
 
-      this.#asyncTasks.push(this.manager);
+    // Handle failed config validation.
+    if (!configSuccessfullyValidated) {
+      console.error('Config file validation failed', {
+        config_path: this.#configPath,
+      });
 
-      this.store = new DataStore(
-        this.config.redis.host,
-        this.config.redis.port
-      );
-
-      // Connect to redis DBs and run setup tasks.
-      await this.store.setup();
-
-      this.orchestrator = new Orchestrator(this.manager, this.store);
-      this.containerLookup = new ContainerLookup(containerConfigs);
-
-      if (chainEnabled) {
-        const walletConfig = this.config.chain.wallet as ConfigWallet;
-        const rpcUrl = this.config.chain.rpc_url as string;
-        const registryAddress = this.config.chain.registry_address as string;
-        const privateKey = add0x(walletConfig.private_key as string);
-        this.rpc = new RPC(rpcUrl, privateKey);
-        this.registry = new Registry(
-          this.rpc,
-          RPC.get_checksum_address(registryAddress)
-        );
-        const paymentAddress = walletConfig.payment_address
-          ? RPC.get_checksum_address(walletConfig.payment_address)
-          : undefined;
-        this.walletChecker = new WalletChecker(
-          this.rpc,
-          this.registry,
-          containerConfigs,
-          paymentAddress
-        );
-        this.guardian = new Guardian(
-          containerConfigs,
-          chainEnabled,
-          this.containerLookup,
-          this.walletChecker
-        );
-
-        await this.registry.populate_addresses();
-
-        this.coordinator = new Coordinator(
-          this.rpc,
-          this.registry.coordinator,
-          this.containerLookup
-        );
-        this.reader = new Reader(
-          this.rpc,
-          this.registry.reader,
-          this.containerLookup
-        );
-        this.wallet = new Wallet(
-          this.rpc,
-          this.coordinator,
-          privateKey,
-          BigInt(walletConfig.max_gas_limit),
-          paymentAddress,
-          walletConfig.allowed_sim_errors
-        );
-        this.paymentWallet = new PaymentWallet(paymentAddress, this.rpc);
-        this.processor = new ChainProcessor(
-          this.rpc,
-          this.coordinator,
-          this.wallet,
-          this.paymentWallet,
-          this.walletChecker,
-          this.registry,
-          this.orchestrator,
-          this.containerLookup
-        );
-        this.listener = new ChainListener(
-          this.rpc,
-          this.coordinator,
-          this.registry,
-          this.reader,
-          this.guardian,
-          this.processor,
-          this.config.chain.trail_head_blocks,
-          this.config.chain.snapshot_sync
-        );
-
-        this.#asyncTasks = this.#asyncTasks.concat([
-          this.processor,
-          this.listener,
-        ]);
-      } else {
-        this.guardian = new Guardian(
-          containerConfigs,
-          chainEnabled,
-          this.containerLookup
-        );
-      }
-
-      this.#asyncTasks.push(
-        new RESTServer(
-          this.guardian,
-          this.manager,
-          this.orchestrator,
-          this.processor,
-          this.store,
-          this.config.chain,
-          this.config.server,
-          __version__,
-          this.wallet?.address
-        )
-      );
-    } catch (err) {
-      throw err;
+      process.exit(1);
     }
+
+    this.config = validatedConfig;
+
+    await checkNodeIsUpToDate();
+
+    const chainEnabled = this.config.chain.enabled;
+
+    console.debug('Running startup', { chain_enabled: chainEnabled });
+
+    const containerConfigs = assignPorts(this.config.containers);
+    this.manager = new ContainerManager(
+      containerConfigs,
+      this.config.docker,
+      this.config.startup_wait,
+      this.config.manage_containers
+    );
+
+    this.#asyncTasks.push(this.manager);
+
+    this.store = new DataStore(this.config.redis.host, this.config.redis.port);
+
+    // Connect to redis DBs and run setup tasks.
+    await this.store.setup();
+
+    this.orchestrator = new Orchestrator(this.manager, this.store);
+    this.containerLookup = new ContainerLookup(containerConfigs);
+
+    if (chainEnabled) {
+      const walletConfig = this.config.chain.wallet as ConfigWallet;
+      const rpcUrl = this.config.chain.rpc_url as string;
+      const registryAddress = this.config.chain.registry_address as string;
+      const privateKey = add0x(walletConfig.private_key as string);
+      this.rpc = new RPC(rpcUrl, privateKey);
+      this.registry = new Registry(
+        this.rpc,
+        RPC.get_checksum_address(registryAddress)
+      );
+      const paymentAddress = walletConfig.payment_address
+        ? RPC.get_checksum_address(walletConfig.payment_address)
+        : undefined;
+      this.walletChecker = new WalletChecker(
+        this.rpc,
+        this.registry,
+        containerConfigs,
+        paymentAddress
+      );
+      this.guardian = new Guardian(
+        containerConfigs,
+        chainEnabled,
+        this.containerLookup,
+        this.walletChecker
+      );
+
+      await this.registry.populate_addresses();
+
+      this.coordinator = new Coordinator(
+        this.rpc,
+        this.registry.coordinator,
+        this.containerLookup
+      );
+      this.reader = new Reader(
+        this.rpc,
+        this.registry.reader,
+        this.containerLookup
+      );
+      this.wallet = new Wallet(
+        this.rpc,
+        this.coordinator,
+        privateKey,
+        BigInt(walletConfig.max_gas_limit),
+        paymentAddress,
+        walletConfig.allowed_sim_errors
+      );
+      this.paymentWallet = new PaymentWallet(paymentAddress, this.rpc);
+      this.processor = new ChainProcessor(
+        this.rpc,
+        this.coordinator,
+        this.wallet,
+        this.paymentWallet,
+        this.walletChecker,
+        this.registry,
+        this.orchestrator,
+        this.containerLookup
+      );
+      this.listener = new ChainListener(
+        this.rpc,
+        this.coordinator,
+        this.registry,
+        this.reader,
+        this.guardian,
+        this.processor,
+        this.config.chain.trail_head_blocks,
+        this.config.chain.snapshot_sync
+      );
+
+      this.#asyncTasks = this.#asyncTasks.concat([
+        this.processor,
+        this.listener,
+      ]);
+    } else {
+      this.guardian = new Guardian(
+        containerConfigs,
+        chainEnabled,
+        this.containerLookup
+      );
+    }
+
+    this.#asyncTasks.push(
+      new RESTServer(
+        this.guardian,
+        this.manager,
+        this.orchestrator,
+        this.processor,
+        this.store,
+        this.config.chain,
+        this.config.server,
+        __version__,
+        this.wallet?.address
+      )
+    );
   }
 
   // Execute component `setup` methods in a concurrent manner.
@@ -238,7 +232,7 @@ export class NodeLifecycle {
     }
   );
 
-  // Execute component `run_forever` methods.
+  // Execute component `run_forever` methods in a concurrent manner.
   #lifecycle_run = NodeLifecycle.methodSchemas._lifecycle_run.implement(
     async () => {
       console.info('Running node lifecycle');
