@@ -110,7 +110,7 @@ This command starts a fork of the Ethereum mainnet, mining a new block every sec
 
 > Tip: If you do not already have a funded Ethereum account, you can use one of the Anvil-provided accounts with pre-funded balances. The private keys for these accounts are displayed when the Anvil testnet starts.
 
-Forking the Ethereum mainnet (or any other Ritual-supported chain) provides us with access to the [Infernet SDK smart contracts](https://docs.ritual.net/infernet/sdk/introduction#deployed-contracts) previously deployed by the Ritual team.
+Forking the Ethereum mainnet (or any other Ritual-supported chain) provides us with access to the Infernet SDK smart contracts previously deployed by the Ritual team.
 
 For reference, the Ethereum mainnet Registry smart contract address is:
 
