@@ -2,7 +2,7 @@
 
 ## Disclaimer
 
-**This project is independently developed and is not affiliated with, sponsored by, or endorsed by Ritual Labs.** Ritual Labs does not provide support or assume responsibility for this repository or any issues that may arise from using this port. Users are encouraged to consult the official Ritual Infernet Node repository for authoritative information, official updates, and formal support.
+**This project is independently developed and is not affiliated with, sponsored by, or endorsed by Ritual Labs.** Ritual Labs does not provide support or assume responsibility for this repository or any issues that may arise from using this code. Users are encouraged to consult the official Ritual Infernet Node repository for authoritative information, official updates, and formal support.
 
 ## License
 
@@ -93,7 +93,7 @@ Follow the instructions below to run the Infernet Node with a development-ready 
 Ensure you have the following dependencies installed, ideally with the exact versions specified:
 
 - [Node.js](https://nodejs.org/) (version 22.14.0)
-- *npm (version 11.1.0)
+- npm (version 11.1.0)
 - [Docker](http://docker.com/) (version 28.0.1)
 - [Redis](https://redis.io/) (version 7.2.5)
 - [Foundry](https://getfoundry.sh/) (version 1.0.0-stable)
@@ -139,7 +139,7 @@ For the config.json file, modify these properties:
 - `chain.wallet.private_key` (Line 22): Set to the private key of the Ethereum account you are using (e.g., a funded Anvil-provided account).
 - `chain.wallet.payment_address` (Line 23): Follow the instructions below to deploy a Wallet smart contract and set this value accordingly.
 
-To deploy a Wallet smart contract, use Foundry's [cast](https://book.getfoundry.sh/cast/) to call the WalletFactory's createWallet method. Fill in the `REGISTRY_ADDRESS`, `ACCOUNT_ADDRESS`, and `PRIVATE_KEY` variables, then run the following commands:
+To deploy a Wallet smart contract, use Foundry's [cast](https://book.getfoundry.sh/cast/) to call the WalletFactory's createWallet method. Fill in the `REGISTRY_ADDRESS`, `ACCOUNT_ADDRESS`, and `PRIVATE_KEY` variables, then copying and pasting the below in your terminal:
 
 ```
 REGISTRY_ADDRESS=0x
