@@ -3,7 +3,6 @@ import { z } from 'zod';
 import {
   encodeAbiParameters,
   Hex,
-  stringToHex,
   ContractFunctionRevertedError,
   ContractFunctionExecutionError,
   BaseError,
@@ -613,9 +612,9 @@ export class ChainProcessor extends AsyncTask {
         }
 
         return [
-          stringToHex(''),
+          '0x',
           encodeAbiParameters([{ type: 'string' }], [JSON.stringify(output)]),
-          stringToHex(''),
+          '0x',
         ];
       }
     );
