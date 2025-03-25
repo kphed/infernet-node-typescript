@@ -163,10 +163,6 @@ export class ChainProcessor extends AsyncTask {
       .function()
       .args(UnionIDSchema)
       .returns(z.boolean()),
-    _serialize_param: z
-      .function()
-      .args(z.string().optional())
-      .returns(HexSchema),
     _serialize_container_output: z
       .function()
       .args(ContainerOutputSchema)
@@ -574,11 +570,6 @@ export class ChainProcessor extends AsyncTask {
       }
     );
 
-  // Serializes container output param as bytes.
-  #serialize_param = ChainProcessor.methodSchemas._serialize_param.implement(
-    (input) => stringToHex(input ?? '')
-  );
-
   // Serializes container output to conform to on-chain fn input.
   #serialize_container_output =
     ChainProcessor.methodSchemas._serialize_container_output.implement(
@@ -604,10 +595,7 @@ export class ChainProcessor extends AsyncTask {
                   type: 'bytes',
                 },
               ],
-              [
-                this.#serialize_param(output['raw_input']),
-                this.#serialize_param(output['processed_input']),
-              ]
+              [output['raw_input'], output['processed_input']]
             ),
             encodeAbiParameters(
               [
@@ -618,12 +606,9 @@ export class ChainProcessor extends AsyncTask {
                   type: 'bytes',
                 },
               ],
-              [
-                this.#serialize_param(output['raw_output']),
-                this.#serialize_param(output['processed_output']),
-              ]
+              [output['raw_output'], output['processed_output']]
             ),
-            this.#serialize_param(output['proof']),
+            output['proof'],
           ];
         }
 
